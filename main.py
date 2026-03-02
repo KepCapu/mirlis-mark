@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QCompleter,
     QFrame,
+    QScrollArea,
     QSizePolicy,
     QTextEdit,
     QToolButton,
@@ -195,6 +196,27 @@ class MirlisMarkApp(QWidget):
                 border-radius: 18px;
             }
 
+            /* история */
+            #HistoryPanel {
+                background: transparent;
+            }
+
+            #HistoryScroll {
+                border: none;
+                background: transparent;
+            }
+
+            #HistoryCard {
+                background: #ffffff;
+                border-radius: 14px;
+                border: 1px solid #e5e7eb;
+                padding: 10px 12px;
+            }
+
+            #HistoryCard:hover {
+                background: #f9fafb;
+            }
+
             #LabelWrap {
                 background: transparent;
             }
@@ -266,21 +288,32 @@ class MirlisMarkApp(QWidget):
                 height: 18px;
             }
 
-            /* кнопки */
+            /* кнопки (общая база) */
             QPushButton {
                 border-radius: 16px;
                 padding: 10px 18px;
                 font-size: 14px;
-                border: 1px solid #cfd6e0;
+                border: 1px solid #d0d7e2;
                 background: #ffffff;
+                color: #111827;
             }
             QPushButton:hover {
-                background: #f5f7fb;
+                background: #eef2ff;
+            }
+            QPushButton:pressed {
+                background: #e0e7ff;
+                border-color: #4f46e5;
+            }
+            QPushButton:disabled {
+                background: #f3f4f6;
+                color: #9ca3af;
+                border-color: #e5e7eb;
             }
 
+            /* основная зелёная кнопка (ПЕЧАТЬ) */
             #Btn_primary {
-                background: #2e7d32;
-                border: 1px solid #2e7d32;
+                background: #16a34a;
+                border: 1px solid #15803d;
                 color: #ffffff;
                 font-weight: 800;
                 font-size: 18px;
@@ -288,76 +321,133 @@ class MirlisMarkApp(QWidget):
                 padding: 18px 18px;
                 border-radius: 18px;
             }
+            #Btn_primary:hover {
+                background: #15803d;
+                border-color: #166534;
+            }
+            #Btn_primary:pressed {
+                background: #166534;
+                border-color: #14532d;
+            }
             #Btn_primary:disabled {
-                background: #cfe3d0;
-                border: 1px solid #cfe3d0;
-                color: rgba(255,255,255,0.7);
+                background: #d1fae5;
+                border: 1px solid #bbf7d0;
+                color: rgba(255,255,255,0.8);
             }
 
+            /* вторичные кнопки (Повторить, Количество и т.п.) */
             #Btn_secondary {
-                background: #ffffff;
-                border: 1px solid #cfd6e0;
+                background: #f9fafb;
+                border: 1px solid #d1d5db;
                 color: #111827;
                 font-weight: 700;
                 font-size: 16px;
                 padding: 18px 18px;
                 border-radius: 18px;
             }
+            #Btn_secondary:hover {
+                background: #eef2ff;
+                border-color: #4f46e5;
+            }
+            #Btn_secondary:pressed {
+                background: #e0e7ff;
+                border-color: #4338ca;
+            }
             #Btn_secondary:disabled {
                 color: #9ca3af;
-                background: #fafafa;
+                background: #f3f4f6;
+                border-color: #e5e7eb;
             }
 
+            /* опасные действия (Очистить) */
             #Btn_danger {
-                border: 1px solid #ff4d4f;
-                color: #ff4d4f;
-                background: #ffffff;
+                border: 1px solid #ef4444;
+                color: #b91c1c;
+                background: #fef2f2;
                 font-weight: 600;
+            }
+            #Btn_danger:hover {
+                background: #fee2e2;
+                border-color: #dc2626;
+            }
+            #Btn_danger:pressed {
+                background: #fecaca;
+                border-color: #b91c1c;
+            }
+            #Btn_danger:disabled {
+                background: #fef2f2;
+                color: #fca5a5;
+                border-color: #fecaca;
             }
 
             /* тулбар редактора */
             #ToolBtn {
-                border: 1px solid #cfd6e0;
+                border: 1px solid #d0d7e2;
                 border-radius: 14px;
-                padding: 10px 14px;
+                padding: 8px 12px;
                 background: #ffffff;
-                min-width: 44px;
+                min-width: 40px;
                 font-weight: 800;
             }
+            #ToolBtn:hover {
+                background: #eef2ff;
+                border-color: #4f46e5;
+            }
             #ToolBtn:checked {
-                background: #eef2f6;
+                background: #e0e7ff;
+                border-color: #4f46e5;
             }
 
-            /* ВАЖНО: комбобоксы — со стрелкой */
-            QComboBox#ComboWithArrow {
-                background: #ffffff;
+            /* выпадающие списки с визуальной стрелкой */
+            QComboBox,
+            QFontComboBox {
+                min-height: 40px;
+                padding: 0 40px 0 12px; /* место под стрелку справа */
                 border: 1px solid #cfd6e0;
-                border-radius: 16px;
-                padding: 8px 12px;
+                border-radius: 12px;
+                background: #f9fafb;
                 font-size: 14px;
             }
-            QComboBox#ComboWithArrow:focus {
-                border: 1px solid #6ea8fe;
+
+            QComboBox:editable,
+            QFontComboBox:editable {
+                background: #ffffff;
             }
 
-            /* drop-down зона справа (видимый “карман”) */
-            QComboBox#ComboWithArrow::drop-down {
+            QComboBox::drop-down,
+            QFontComboBox::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 34px;
+                width: 40px;
                 border-left: 1px solid #cfd6e0;
-                border-top-right-radius: 16px;
-                border-bottom-right-radius: 16px;
-                background: #eef2f6;
+                background: #f3f4f6;
+                border-top-right-radius: 12px;
+                border-bottom-right-radius: 12px;
             }
-            /* down-arrow: используем системную стрелку (не переопределяем) */
+
+            QComboBox::down-arrow {
+                image: url(assets/arrow-down.svg);
+                width: 18px;
+                height: 18px;
+            }
+
+            QFontComboBox::down-arrow {
+                image: none;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #6b7280; /* ▾ */
+            }
+
             /* выпадающий список */
-            QComboBox QAbstractItemView {
+            QComboBox QAbstractItemView,
+            QFontComboBox QAbstractItemView {
                 background: #ffffff;
                 border: 1px solid #cfd6e0;
                 border-radius: 10px;
-                selection-background-color: #e0f2fe;
-                selection-color: #2563eb;
+                selection-background-color: #e5f3ec;
+                selection-color: #14532d;
                 outline: none;
                 padding: 6px;
             }
@@ -539,7 +629,13 @@ class MirlisMarkApp(QWidget):
         left_layout.addWidget(self.checked_input)
 
         left_layout.addStretch(1)
-        row.addWidget(self.card_left, 1)
+
+        # оборачиваем левую карточку в контейнер для гибкой раскладки
+        left_panel = QWidget()
+        left_panel_layout = QVBoxLayout(left_panel)
+        left_panel_layout.setContentsMargins(0, 0, 0, 0)
+        left_panel_layout.setSpacing(0)
+        left_panel_layout.addWidget(self.card_left)
 
         # right card (preview)
         self.card_right = Card()
@@ -678,7 +774,113 @@ class MirlisMarkApp(QWidget):
 
         right_layout.addLayout(pr)
 
-        row.addWidget(self.card_right, 2)
+        # оборачиваем правую карточку предпросмотра в отдельный контейнер (центр)
+        center_panel = QWidget()
+        center_panel_layout = QVBoxLayout(center_panel)
+        center_panel_layout.setContentsMargins(0, 0, 0, 0)
+        center_panel_layout.setSpacing(0)
+        center_panel_layout.addWidget(self.card_right)
+
+        # -------- History panel (right) --------
+        self.history_panel = QWidget()
+        self.history_panel.setObjectName("HistoryPanel")
+        history_layout = QVBoxLayout(self.history_panel)
+        history_layout.setContentsMargins(18, 18, 18, 18)
+        history_layout.setSpacing(12)
+
+        history_title = HeaderLabel("История")
+        history_layout.addWidget(history_title, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        self.history_search = QLineEdit()
+        self.history_search.setPlaceholderText("Поиск по истории")
+        history_layout.addWidget(self.history_search)
+
+        self.history_scroll = QScrollArea()
+        self.history_scroll.setObjectName("HistoryScroll")
+        self.history_scroll.setWidgetResizable(True)
+        history_layout.addWidget(self.history_scroll, 1)
+
+        history_scroll_content = QWidget()
+        self.history_list_layout = QVBoxLayout(history_scroll_content)
+        self.history_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.history_list_layout.setSpacing(10)
+
+        # тестовые карточки истории (пока без реальных данных)
+        sample_items = [
+            {
+                "product": "Гречка отварная",
+                "qty": "3 кг",
+                "made": "Буров Велорий",
+                "checked": "Автономов Дмитрий",
+                "time": "02.03.2026 14:54",
+                "batch": "020326",
+            },
+            {
+                "product": "Курица запечённая",
+                "qty": "5 кг",
+                "made": "Иванова Мария",
+                "checked": "Петров Сергей",
+                "time": "02.03.2026 13:10",
+                "batch": "020325",
+            },
+            {
+                "product": "Рис отварной",
+                "qty": "2 кг",
+                "made": "Сидоров Алексей",
+                "checked": "Кузнецова Анна",
+                "time": "02.03.2026 12:30",
+                "batch": "020324",
+            },
+        ]
+
+        for item in sample_items:
+            card = QFrame()
+            card.setObjectName("HistoryCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 8, 10, 8)
+            card_layout.setSpacing(4)
+
+            top_row = QHBoxLayout()
+            top_row.setSpacing(6)
+
+            prod_label = QLabel(item["product"])
+            prod_label.setStyleSheet("font-weight: 600;")
+            qty_label = QLabel(item["qty"])
+            qty_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            qty_label.setStyleSheet("font-weight: 600; color: #111827;")
+
+            top_row.addWidget(prod_label, 1)
+            top_row.addWidget(qty_label, 0)
+
+            mid_row = QLabel(f"{item['made']} · {item['checked']}")
+            mid_row.setStyleSheet("color: #6b7280; font-size: 12px;")
+
+            bottom_row = QHBoxLayout()
+            bottom_row.setSpacing(6)
+
+            time_label = QLabel(item["time"])
+            time_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
+
+            batch_label = QLabel(f"№ {item['batch']}")
+            batch_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            batch_label.setStyleSheet("color: #6b7280; font-size: 12px;")
+
+            bottom_row.addWidget(time_label, 1)
+            bottom_row.addWidget(batch_label, 0)
+
+            card_layout.addLayout(top_row)
+            card_layout.addWidget(mid_row)
+            card_layout.addLayout(bottom_row)
+
+            self.history_list_layout.addWidget(card)
+
+        self.history_list_layout.addStretch(1)
+        self.history_scroll.setWidget(history_scroll_content)
+
+        # добавляем три панели в основной ряд с пропорциями 3:4:3
+        row.addWidget(left_panel, 3)
+        row.addWidget(center_panel, 4)
+        row.addWidget(self.history_panel, 3)
         root.addLayout(row)
 
 # ---------------- Signals ----------------
@@ -742,6 +944,9 @@ class MirlisMarkApp(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._resize_label_preview()
+        # адаптивность: панель истории скрываем на узких окнах
+        if hasattr(self, "history_panel"):
+            self.history_panel.setVisible(self.width() >= 1400)
 
     def _resize_label_preview(self):
         # Подгоняем “лист этикетки” под доступное место, сохраняя пропорцию 80×60 (4:3)
@@ -1253,12 +1458,14 @@ class MirlisMarkApp(QWidget):
 
 
 def main():
+
     app = QApplication(sys.argv)
     w = MirlisMarkApp()
+
     # старт сразу в развёрнутом окне
     w.showMaximized()
-    sys.exit(app.exec())
 
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
