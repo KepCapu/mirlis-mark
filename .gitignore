@@ -9,7 +9,8 @@ venv/
 env/
 
 # data
-data_sources/
+data_sources/*
+!data_sources/.keep
 *.xlsx
 
 # IDE
