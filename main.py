@@ -8,6 +8,7 @@
 
 import sys
 import os
+import time
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -159,6 +160,14 @@ class MirlisMarkApp(QWidget):
         # базовый размер шрифта в редакторе
         self._base_font_size = 12
 
+        # состояние истории (должно существовать до init_ui / _rebuild_history_view)
+        self.history_entries: list[dict] = []
+        self._history_filter_text: str = ""
+        self.history_page: int = 0
+        self.history_page_size: int = 10
+        self._loading_from_history = False
+        self._selected_history_id = None
+
         self._apply_global_style()
         self.init_ui()
         self.reload_excel(show_message=False)
@@ -215,6 +224,11 @@ class MirlisMarkApp(QWidget):
 
             #HistoryCard:hover {
                 background: #f9fafb;
+            }
+
+            #HistoryCard[selected="true"] {
+                border: 2px solid #4f46e5;
+                background: #eef2ff;
             }
 
             #LabelWrap {
@@ -296,18 +310,34 @@ class MirlisMarkApp(QWidget):
                 border: 1px solid #d0d7e2;
                 background: #ffffff;
                 color: #111827;
+                box-shadow: none;
             }
             QPushButton:hover {
                 background: #eef2ff;
             }
             QPushButton:pressed {
-                background: #e0e7ff;
+                background: #e5e7ff;
                 border-color: #4f46e5;
             }
             QPushButton:disabled {
                 background: #f3f4f6;
                 color: #9ca3af;
                 border-color: #e5e7eb;
+            }
+
+            /* плоские кнопки степперов (+ / -) */
+            #StepperBtn {
+                background: #f9fafb;
+                border-radius: 12px;
+                border: 1px solid #d1d5db;
+                box-shadow: none;
+            }
+            #StepperBtn:hover {
+                background: #e5e7eb;
+                border-color: #d1d5db;
+            }
+            #StepperBtn:pressed {
+                background: #d1d5db;
             }
 
             /* основная зелёная кнопка (ПЕЧАТЬ) */
@@ -425,19 +455,21 @@ class MirlisMarkApp(QWidget):
                 border-bottom-right-radius: 12px;
             }
 
-            QComboBox::down-arrow {
-                image: url(assets/arrow-down.svg);
+            QComboBox::down-arrow,
+            QFontComboBox::down-arrow {
+                /* chevron-down через встроенный SVG (percent-encoded, без внешнего файла) */
+                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2718%27%20height%3D%2718%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%236b7280%27%20stroke-width%3D%272.6%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
                 width: 18px;
                 height: 18px;
+                margin-right: 10px;
             }
 
-            QFontComboBox::down-arrow {
-                image: none;
-                width: 0;
-                height: 0;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #6b7280; /* ▾ */
+            QComboBox:disabled::down-arrow,
+            QFontComboBox:disabled::down-arrow {
+                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2718%27%20height%3D%2718%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%239ca3af%27%20stroke-width%3D%272.6%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
+                width: 18px;
+                height: 18px;
+                margin-right: 10px;
             }
 
             /* выпадающий список */
@@ -469,18 +501,24 @@ class MirlisMarkApp(QWidget):
 
         # logo
         self.logo = QLabel()
-        self.logo.setFixedSize(220, 80)
+        # чуть компактнее, чтобы не выглядел растянутым
+        self.logo.setFixedSize(176, 64)
         self.logo.setScaledContents(True)
         self._load_logo()
         top_layout.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # app title block
         title_block = QVBoxLayout()
+        title_block.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
 
         self.title_mark = QLabel(APP_MARK)
-        self.title_mark.setStyleSheet("font-size: 32px; font-weight: 900; color: #0f172a;; background: transparent;")
+        self.title_mark.setStyleSheet(
+            'font-size: 32px; font-weight: 800; color: #0f172a; '
+            'font-family: "Segoe UI Rounded","Segoe UI","Arial"; '
+            "background: transparent;"
+        )
         title_row.addWidget(self.title_mark)
 
         self.badge_ver = Pill(APP_VERSION)
@@ -490,7 +528,7 @@ class MirlisMarkApp(QWidget):
         title_block.addLayout(title_row)
 
         self.subtitle = QLabel(APP_SUBTITLE)
-        self.subtitle.setStyleSheet("font-size: 16px; color: #64748b; padding-left: 2px; background: transparent;")
+        self.subtitle.setStyleSheet("font-size: 16px; color: #64748b; padding-left: 2px; margin-top: 0px; background: transparent;")
         title_block.addWidget(self.subtitle)
 
         top_layout.addLayout(title_block, 0)
@@ -768,6 +806,10 @@ class MirlisMarkApp(QWidget):
         for w in (self.print_btn, self.repeat_btn, self.copies_btn, self.copies_minus, self.copies_plus, self.copies_input):
             w.setMinimumHeight(68)
 
+        # плоские кнопки степперов
+        for w in (self.minus_btn, self.plus_btn, self.copies_minus, self.copies_plus):
+            w.setObjectName("StepperBtn")
+
         pr.addWidget(self.print_btn, 1)
         pr.addWidget(self.repeat_btn, 1)
         pr.addWidget(copies_wrap, 1)
@@ -805,77 +847,23 @@ class MirlisMarkApp(QWidget):
         self.history_list_layout.setContentsMargins(0, 0, 0, 0)
         self.history_list_layout.setSpacing(10)
 
-        # тестовые карточки истории (пока без реальных данных)
-        sample_items = [
-            {
-                "product": "Гречка отварная",
-                "qty": "3 кг",
-                "made": "Буров Велорий",
-                "checked": "Автономов Дмитрий",
-                "time": "02.03.2026 14:54",
-                "batch": "020326",
-            },
-            {
-                "product": "Курица запечённая",
-                "qty": "5 кг",
-                "made": "Иванова Мария",
-                "checked": "Петров Сергей",
-                "time": "02.03.2026 13:10",
-                "batch": "020325",
-            },
-            {
-                "product": "Рис отварной",
-                "qty": "2 кг",
-                "made": "Сидоров Алексей",
-                "checked": "Кузнецова Анна",
-                "time": "02.03.2026 12:30",
-                "batch": "020324",
-            },
-        ]
-
-        for item in sample_items:
-            card = QFrame()
-            card.setObjectName("HistoryCard")
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(10, 8, 10, 8)
-            card_layout.setSpacing(4)
-
-            top_row = QHBoxLayout()
-            top_row.setSpacing(6)
-
-            prod_label = QLabel(item["product"])
-            prod_label.setStyleSheet("font-weight: 600;")
-            qty_label = QLabel(item["qty"])
-            qty_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            qty_label.setStyleSheet("font-weight: 600; color: #111827;")
-
-            top_row.addWidget(prod_label, 1)
-            top_row.addWidget(qty_label, 0)
-
-            mid_row = QLabel(f"{item['made']} · {item['checked']}")
-            mid_row.setStyleSheet("color: #6b7280; font-size: 12px;")
-
-            bottom_row = QHBoxLayout()
-            bottom_row.setSpacing(6)
-
-            time_label = QLabel(item["time"])
-            time_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
-
-            batch_label = QLabel(f"№ {item['batch']}")
-            batch_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            batch_label.setStyleSheet("color: #6b7280; font-size: 12px;")
-
-            bottom_row.addWidget(time_label, 1)
-            bottom_row.addWidget(batch_label, 0)
-
-            card_layout.addLayout(top_row)
-            card_layout.addWidget(mid_row)
-            card_layout.addLayout(bottom_row)
-
-            self.history_list_layout.addWidget(card)
-
-        self.history_list_layout.addStretch(1)
         self.history_scroll.setWidget(history_scroll_content)
+
+        # пагинация истории
+        pager_row = QHBoxLayout()
+        pager_row.setSpacing(8)
+
+        self.history_prev_btn = ActionBtn("‹", kind="default")
+        self.history_next_btn = ActionBtn("›", kind="default")
+        self.history_page_label = QLabel("Стр. 1 / 1")
+        self.history_page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.history_page_label.setStyleSheet("color: #6b7280; font-size: 12px;")
+
+        pager_row.addWidget(self.history_prev_btn, 0)
+        pager_row.addWidget(self.history_page_label, 1)
+        pager_row.addWidget(self.history_next_btn, 0)
+
+        history_layout.addLayout(pager_row)
 
         # добавляем три панели в основной ряд с пропорциями 3:4:3
         row.addWidget(left_panel, 3)
@@ -907,6 +895,8 @@ class MirlisMarkApp(QWidget):
 
         # editor signals: чтобы не откатывало форматирование
         self.preview.textChanged.connect(self._on_preview_text_changed)
+        self.preview.cursorPositionChanged.connect(self._sync_format_toolbar_from_cursor)
+        self.preview.selectionChanged.connect(self._sync_format_toolbar_from_cursor)
 
         # toolbar actions
         self.btn_font_minus.clicked.connect(lambda: self._change_font_size(-1))
@@ -924,12 +914,20 @@ class MirlisMarkApp(QWidget):
 
         self.font_combo.currentFontChanged.connect(self._set_font_family_on_selection)
 
+        # история: поиск и пагинация
+        self.history_search.textChanged.connect(self._on_history_search_text_changed)
+        self.history_prev_btn.clicked.connect(lambda: self._change_history_page(-1))
+        self.history_next_btn.clicked.connect(lambda: self._change_history_page(+1))
+
         # дефолт шрифта редактора
         self.preview.setFont(QFont("Segoe UI", self._base_font_size))
 
         # ВАЖНО: применяем стиль комбобоксов явно (иначе иногда теряются подстили)
         for cb in (self.product_combo, self.unit_combo, self.made_combo, self.checked_combo, self.font_combo):
             cb.setObjectName("ComboWithArrow")
+
+        # инициализация состояния истории
+        self._rebuild_history_view()
 
     def _load_logo(self):
         if os.path.exists(LOGO_PATH):
@@ -1104,18 +1102,295 @@ class MirlisMarkApp(QWidget):
         name = (name or "").strip()
         return next((p for p in self.products if (p.get("name") or "").strip() == name), None)
 
+    def _clear_layout(self, layout: QHBoxLayout | QVBoxLayout):
+        """Полностью очищает layout от вложенных виджетов/лейаутов."""
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            child_layout = item.layout()
+            if child_layout is not None:
+                self._clear_layout(child_layout)  # type: ignore[arg-type]
+            if w is not None:
+                w.deleteLater()
+
+    # ---------------- History helpers ----------------
+    def _filtered_history_entries(self) -> list[dict]:
+        if not self._history_filter_text:
+            return list(self.history_entries)
+        q = self._history_filter_text
+        result: list[dict] = []
+        for e in self.history_entries:
+            text = " ".join(
+                [
+                    str(e.get("product", "")),
+                    str(e.get("qty", "")),
+                    str(e.get("made", "")),
+                    str(e.get("checked", "")),
+                    str(e.get("time", "")),
+                    str(e.get("batch", "")),
+                ]
+            ).lower()
+            if q in text:
+                result.append(e)
+        return result
+
+    def _rebuild_history_view(self):
+        """Перестроить список карточек истории + пагинацию."""
+        if not hasattr(self, "history_list_layout"):
+            return
+
+        entries = self._filtered_history_entries()
+        total = len(entries)
+        page_size = max(1, self.history_page_size)
+        pages = max(1, (total + page_size - 1) // page_size)
+        self.history_page = max(0, min(self.history_page, pages - 1))
+
+        start = self.history_page * page_size
+        end = start + page_size
+        page_entries = entries[start:end]
+
+        self._clear_layout(self.history_list_layout)  # type: ignore[arg-type]
+
+        for e in page_entries:
+            card = QFrame()
+            card.setObjectName("HistoryCard")
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.setProperty("selected", (e.get("id") == getattr(self, "_selected_history_id", None)))
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 8, 10, 8)
+            card_layout.setSpacing(4)
+
+            top_row = QHBoxLayout()
+            top_row.setSpacing(6)
+
+            prod_label = QLabel(str(e.get("product", "")))
+            prod_label.setStyleSheet("font-weight: 600;")
+            prod_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            qty_label = QLabel(str(e.get("qty", "")))
+            qty_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            qty_label.setStyleSheet("font-weight: 600; color: #111827;")
+            qty_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+            top_row.addWidget(prod_label, 1)
+            top_row.addWidget(qty_label, 0)
+
+            made = str(e.get("made", ""))
+            checked = str(e.get("checked", ""))
+            mid_parts = [p for p in [made, checked] if p]
+            mid_text = " · ".join(mid_parts) if mid_parts else ""
+            mid_row = QLabel(mid_text)
+            mid_row.setStyleSheet("color: #6b7280; font-size: 12px;")
+            mid_row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+            bottom_row = QHBoxLayout()
+            bottom_row.setSpacing(6)
+
+            time_label = QLabel(str(e.get("time", "")))
+            time_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
+            time_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+            batch = str(e.get("batch", ""))
+            batch_label = QLabel(f"№ {batch}" if batch else "")
+            batch_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            batch_label.setStyleSheet("color: #6b7280; font-size: 12px;")
+            batch_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+            bottom_row.addWidget(time_label, 1)
+            bottom_row.addWidget(batch_label, 0)
+
+            card_layout.addLayout(top_row)
+            card_layout.addWidget(mid_row)
+            card_layout.addLayout(bottom_row)
+
+            # важно: ent=e чтобы не было бага замыкания
+            card.mousePressEvent = (lambda ev, ent=e: self._on_history_clicked(ent))
+            card.style().unpolish(card)
+            card.style().polish(card)
+            self.history_list_layout.addWidget(card)
+
+        self.history_list_layout.addStretch(1)
+
+        # обновим подпись и активность кнопок пагинации
+        if hasattr(self, "history_page_label"):
+            self.history_page_label.setText(f"Стр. {self.history_page + 1} / {pages}")
+        if hasattr(self, "history_prev_btn"):
+            self.history_prev_btn.setEnabled(self.history_page > 0)
+        if hasattr(self, "history_next_btn"):
+            self.history_next_btn.setEnabled(self.history_page < pages - 1)
+
+    def _on_history_search_text_changed(self, text: str):
+        self._history_filter_text = (text or "").strip().lower()
+        self.history_page = 0
+        self._rebuild_history_view()
+
+    def _change_history_page(self, delta: int):
+        self.history_page += delta
+        self._rebuild_history_view()
+
+    def _build_history_entry_from_label(self, label, qty_display: str, unit_ui: str) -> dict:
+        produced_at = getattr(label, "produced_at", datetime.now())
+        preview_text = (
+            f"{getattr(label, 'weekday', '')}\n"
+            f"Продукт: {getattr(label, 'product_name', '')}\n"
+            f"Вес/шт: {getattr(label, 'qty_value', '')} {getattr(label, 'qty_unit_ru', '')}\n"
+            f"Дата/время: {format_dt(produced_at)}\n"
+            f"№ партии: {getattr(label, 'batch', '')}\n"
+            f"Годен до: {format_dt(getattr(label, 'expires_at', produced_at))}\n"
+            f"Изготовил: {getattr(label, 'made_by', '')}\n"
+            f"Проверил: {getattr(label, 'checked_by', '')}\n"
+        )
+
+        return {
+            "id": time.time_ns(),
+            "ts": time.time(),
+            "product_name": getattr(label, "product_name", ""),
+            "unit_ui": unit_ui,
+            "qty_value": str(qty_display),
+            "made_by": getattr(label, "made_by", ""),
+            "made_manual": bool(self.made_manual.isChecked()),
+            "checked_by": getattr(label, "checked_by", ""),
+            "checked_manual": bool(self.checked_manual.isChecked()),
+            "preview_text": preview_text,
+            # поля для отображения карточки
+            "product": getattr(label, "product_name", ""),
+            "qty": f"{qty_display} {unit_ui}".strip(),
+            "made": getattr(label, "made_by", ""),
+            "checked": getattr(label, "checked_by", ""),
+            "time": format_dt(produced_at),
+            "batch": getattr(label, "batch", ""),
+        }
+
+    def _append_history_entry(self, entry: dict):
+        # newest-first: новая запись должна быть сверху
+        if not hasattr(self, "history_entries") or not isinstance(self.history_entries, list):
+            self.history_entries = []
+        self.history_entries.insert(0, entry)
+        # при новом элементе остаёмся на 1-й странице (там самые новые), если нет фильтра
+        if not self._history_filter_text:
+            self.history_page = 0
+        self._rebuild_history_view()
+
+    def _on_history_clicked(self, entry: dict):
+        self._selected_history_id = entry.get("id")
+        self.apply_history_entry(entry)
+        self._rebuild_history_view()
+
+    def apply_history_entry(self, entry: dict):
+        self._loading_from_history = True
+        try:
+            # блокируем сигналы формы, чтобы не запускать лишние обработчики
+            to_block = (
+                self.product_combo,
+                self.qty_input,
+                self.made_manual,
+                self.made_combo,
+                self.made_input,
+                self.checked_manual,
+                self.checked_combo,
+                self.checked_input,
+            )
+            for w in to_block:
+                w.blockSignals(True)
+
+            product_name = str(entry.get("product_name") or entry.get("product") or "").strip()
+            unit_ui = str(entry.get("unit_ui") or "").strip()
+            qty_value = str(entry.get("qty_value") or "").strip()
+            made_by = str(entry.get("made_by") or entry.get("made") or "").strip()
+            made_manual = bool(entry.get("made_manual", False))
+            checked_by = str(entry.get("checked_by") or entry.get("checked") or "").strip()
+            checked_manual = bool(entry.get("checked_manual", False))
+
+            # продукт
+            idx = self.product_combo.findText(product_name)
+            if idx >= 0:
+                self.product_combo.setCurrentIndex(idx)
+            else:
+                self.product_combo.setEditText(product_name)
+
+            # наполняем единицы измерения через существующую логику (refresh_preview подавлен guard-ом)
+            self.on_product_changed(product_name)
+
+            # единица измерения
+            self.unit_combo.blockSignals(True)
+            try:
+                if unit_ui:
+                    idxu = self.unit_combo.findText(unit_ui)
+                    if idxu >= 0:
+                        self.unit_combo.setCurrentIndex(idxu)
+            finally:
+                self.unit_combo.blockSignals(False)
+
+            # количество
+            self.qty_input.setText(qty_value)
+
+            # изготовил
+            self.made_manual.setChecked(made_manual)
+            self.toggle_made_mode()
+            if made_manual:
+                self.made_input.setText(made_by)
+            else:
+                idxm = self.made_combo.findText(made_by)
+                if idxm >= 0:
+                    self.made_combo.setCurrentIndex(idxm)
+                elif made_by:
+                    self.made_manual.setChecked(True)
+                    self.toggle_made_mode()
+                    self.made_input.setText(made_by)
+
+            # проверил
+            self.checked_manual.setChecked(checked_manual)
+            self.toggle_checked_mode()
+            if checked_manual:
+                self.checked_input.setText(checked_by)
+            else:
+                idxc = self.checked_combo.findText(checked_by)
+                if idxc >= 0:
+                    self.checked_combo.setCurrentIndex(idxc)
+                elif checked_by:
+                    self.checked_manual.setChecked(True)
+                    self.toggle_checked_mode()
+                    self.checked_input.setText(checked_by)
+
+        finally:
+            for w in (
+                self.product_combo,
+                self.qty_input,
+                self.made_manual,
+                self.made_combo,
+                self.made_input,
+                self.checked_manual,
+                self.checked_combo,
+                self.checked_input,
+            ):
+                w.blockSignals(False)
+            self._loading_from_history = False
+
+        # предпросмотр выбранной записи
+        preview_text = entry.get("preview_text")
+        if isinstance(preview_text, str) and preview_text.strip():
+            self._set_preview_text_programmatically(preview_text)
+            # фиксируем, чтобы таймер не перетирал выбранную историю
+            self._user_edited_preview = True
+            _, can_print = self._build_label_plain_text()
+            self.print_btn.setEnabled(can_print)
+        else:
+            self._user_edited_preview = False
+            self.refresh_preview()
+
     # ---------------- UI actions ----------------
     def toggle_made_mode(self):
         manual = self.made_manual.isChecked()
         self.made_combo.setVisible(not manual)
         self.made_input.setVisible(manual)
-        self.refresh_preview()
+        if not getattr(self, "_loading_from_history", False):
+            self.refresh_preview()
 
     def toggle_checked_mode(self):
         manual = self.checked_manual.isChecked()
         self.checked_combo.setVisible(not manual)
         self.checked_input.setVisible(manual)
-        self.refresh_preview()
+        if not getattr(self, "_loading_from_history", False):
+            self.refresh_preview()
 
     def on_product_changed(self, product_name: str):
         self.unit_combo.blockSignals(True)
@@ -1137,7 +1412,8 @@ class MirlisMarkApp(QWidget):
                     self.unit_combo.addItem(u)
 
         self.unit_combo.blockSignals(False)
-        self.refresh_preview()
+        if not getattr(self, "_loading_from_history", False):
+            self.refresh_preview()
 
     def _step_for_unit(self) -> float:
         unit_ru = self.unit_combo.currentText()
@@ -1282,6 +1558,8 @@ class MirlisMarkApp(QWidget):
         return (text, True)
 
     def refresh_preview(self):
+        if getattr(self, "_loading_from_history", False):
+            return
         text, can_print = self._build_label_plain_text()
         self.print_btn.setEnabled(can_print)
 
@@ -1308,26 +1586,72 @@ class MirlisMarkApp(QWidget):
         self.preview.mergeCurrentCharFormat(fmt)
 
     def _toggle_bold_on_selection(self):
-        cursor = self.preview.textCursor()
-        if not cursor.hasSelection():
-            cursor.select(QTextCursor.SelectionType.WordUnderCursor)
-
-        current = self.preview.currentCharFormat().fontWeight()
-        new_weight = QFont.Weight.Normal if current >= QFont.Weight.Bold else QFont.Weight.Bold
-
         fmt = QTextCharFormat()
-        fmt.setFontWeight(new_weight)
+        # состояние берём из самой кнопки (как в Word)
+        desired_bold = self.btn_bold.isChecked()
+        fmt.setFontWeight(QFont.Weight.Bold if desired_bold else QFont.Weight.Normal)
         self._merge_format_on_selection(fmt)
+        self._sync_format_toolbar_from_cursor()
 
     def _toggle_italic_on_selection(self):
         fmt = QTextCharFormat()
-        fmt.setFontItalic(not self.preview.currentCharFormat().fontItalic())
+        desired = self.btn_italic.isChecked()
+        fmt.setFontItalic(desired)
         self._merge_format_on_selection(fmt)
+        self._sync_format_toolbar_from_cursor()
 
     def _toggle_underline_on_selection(self):
         fmt = QTextCharFormat()
-        fmt.setFontUnderline(not self.preview.currentCharFormat().fontUnderline())
+        desired = self.btn_underline.isChecked()
+        fmt.setFontUnderline(desired)
         self._merge_format_on_selection(fmt)
+        self._sync_format_toolbar_from_cursor()
+
+    def _sync_format_toolbar_from_cursor(self):
+        """Синхронизация состояний Ж/К/Ч с текущим форматированием, как в Word."""
+        cursor = self.preview.textCursor()
+        fmt = cursor.charFormat() if cursor.charFormat().isValid() else self.preview.currentCharFormat()
+
+        self.btn_bold.blockSignals(True)
+        self.btn_italic.blockSignals(True)
+        self.btn_underline.blockSignals(True)
+        try:
+            self.btn_bold.setChecked(fmt.fontWeight() >= QFont.Weight.Bold)
+            self.btn_italic.setChecked(fmt.fontItalic())
+            self.btn_underline.setChecked(fmt.fontUnderline())
+        finally:
+            self.btn_bold.blockSignals(False)
+            self.btn_italic.blockSignals(False)
+            self.btn_underline.blockSignals(False)
+
+        # параллельно обновляем UI размера шрифта
+        self._sync_font_size_from_cursor()
+
+    def _sync_font_size_from_cursor(self):
+        """
+        Синхронизировать поле размера шрифта с текущей позицией курсора
+        (как в Word).
+        """
+        if not hasattr(self, "font_size_combo"):
+            return
+
+        cursor = self.preview.textCursor()
+        fmt = cursor.charFormat()
+
+        size = fmt.fontPointSize()
+        if size <= 0:
+            # если размер не задан явно в формате — считаем, что используется базовый
+            size = float(self._base_font_size)
+
+        size_int = int(round(size))
+        if size_int <= 0:
+            size_int = self._base_font_size
+
+        self._base_font_size = size_int
+
+        self.font_size_combo.blockSignals(True)
+        self.font_size_combo.setCurrentText(str(size_int))
+        self.font_size_combo.blockSignals(False)
 
     def _set_alignment(self, align_flag: Qt.AlignmentFlag):
         # alignment в QTextEdit — на уровне блока.
@@ -1444,6 +1768,14 @@ class MirlisMarkApp(QWidget):
         try:
             printer_name = win32print.GetDefaultPrinter()
             print_raw(printer_name, tspl)
+            # только успешные печати попадают в историю
+            entry = self._build_history_entry_from_label(
+                label,
+                qty_display=qty,
+                unit_ui=self.unit_combo.currentText(),
+            )
+            self.last_history_entry = entry
+            self._append_history_entry(entry)
         except Exception as e:
             QMessageBox.warning(self, "Печать", f"Не удалось отправить на печать:\n{e}")
 
@@ -1452,7 +1784,14 @@ class MirlisMarkApp(QWidget):
             return
         try:
             printer_name = win32print.GetDefaultPrinter()
-            print_raw(printer_name, self._apply_copies_to_tspl(self.last_tspl, self._get_copies()))
+            tspl = self._apply_copies_to_tspl(self.last_tspl, self._get_copies())
+            print_raw(printer_name, tspl)
+            # повтор также пишем в историю, если есть данные о последней этикетке
+            if self.last_history_entry is not None:
+                e = dict(self.last_history_entry)
+                e["id"] = time.time_ns()
+                e["ts"] = time.time()
+                self._append_history_entry(e)
         except Exception as e:
             QMessageBox.warning(self, "Повтор", f"Не удалось повторить печать:\n{e}")
 
