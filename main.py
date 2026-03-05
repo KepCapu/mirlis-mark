@@ -43,8 +43,8 @@ from PyQt6.QtGui import (
 from PyQt6.QtCore import QStringListModel
 
 from excel_loader import load_products, load_staff
-from label_logic import build_label, format_dt, generate_tspl
-from printer import print_raw
+from label_logic import build_label, format_dt
+from printer import print_text_as_bitmap_tspl, print_raw
 import win32print
 
 
@@ -143,9 +143,9 @@ class MirlisMarkApp(QWidget):
         # окно растягиваемое, но с адекватным минимумом
         self.setMinimumSize(1100, 650)
 
-        # печать
-        self.last_tspl: str | None = None
-        self.last_tspl_human: str | None = None
+        # печать (последний напечатанный текст для «Повторить»)
+        self.last_printed_preview_text: str | None = None
+        self.last_history_entry: dict | None = None
 
         # данные
         self.products = []
@@ -1737,56 +1737,111 @@ class MirlisMarkApp(QWidget):
 
 # ---------------- Printing ----------------
     def print_label(self):
-        product_name = self.product_combo.currentText().strip()
-        product = self.get_product(product_name)
-
-        unit_code = self._unit_code_from_ui(self.unit_combo.currentText())
-        qty = self.qty_input.text().strip().replace(",", ".")
-
-        if not product or unit_code is None or not qty:
+        preview_text = self.preview.toPlainText()
+        if not (preview_text or "").strip():
+            QMessageBox.warning(self, "Печать", "Предпросмотр пуст. Заполните форму или введите текст в предпросмотр.")
             return
 
-        made_by = self._made_value()
-        checked_by = self._checked_value()
+        printer_name = win32print.GetDefaultPrinter()
 
-        label = build_label(
-            product_name=product["name"],
-            shelf_life_hours=product["shelf_life_hours"],
-            qty_value=qty,
-            unit=unit_code,
-            made_by=made_by,
-            checked_by=checked_by,
-        )
-
-        tspl_base = generate_tspl(label)
-        tspl = self._apply_copies_to_tspl(tspl_base, self._get_copies())
-
-        self.last_tspl = tspl_base
-        self.last_tspl_human = f"{product['name']} / {qty} {self.unit_combo.currentText()}"
-        self.repeat_btn.setEnabled(True)
+        font_size_pt = self._base_font_size
+        try:
+            font_size_pt = int(self.font_size_combo.currentText().strip() or font_size_pt)
+        except Exception:
+            pass
+        font_size_pt = max(26, min(72, font_size_pt))
 
         try:
-            printer_name = win32print.GetDefaultPrinter()
-            print_raw(printer_name, tspl)
-            # только успешные печати попадают в историю
-            entry = self._build_history_entry_from_label(
-                label,
-                qty_display=qty,
-                unit_ui=self.unit_combo.currentText(),
+            n_bytes = print_text_as_bitmap_tspl(
+                printer_name,
+                preview_text,
+                label_w_mm=58,
+                label_h_mm=80,
+                padding_mm=0.2,
+                font_size_pt=font_size_pt,
             )
-            self.last_history_entry = entry
-            self._append_history_entry(entry)
+            print("SENDING BITMAP...", n_bytes, "bytes")
         except Exception as e:
             QMessageBox.warning(self, "Печать", f"Не удалось отправить на печать:\n{e}")
+            return
+
+        self.repeat_btn.setEnabled(True)
+        self.last_printed_preview_text = preview_text
+
+        # только после успешной печати — в историю (старая структура entry для отображения)
+        product_name = self.product_combo.currentText().strip()
+        product = self.get_product(product_name)
+        unit_ui = self.unit_combo.currentText()
+        unit_code = self._unit_code_from_ui(unit_ui)
+        qty = self.qty_input.text().strip().replace(",", ".")
+
+        if product and unit_code and qty:
+            try:
+                label = build_label(
+                    product_name=product["name"],
+                    shelf_life_hours=product["shelf_life_hours"],
+                    qty_value=qty,
+                    unit=unit_code,
+                    made_by=self._made_value(),
+                    checked_by=self._checked_value(),
+                )
+                entry = self._build_history_entry_from_label(
+                    label,
+                    qty_display=qty,
+                    unit_ui=unit_ui,
+                )
+                entry["preview_text"] = preview_text
+            except Exception:
+                lines = preview_text.strip().splitlines()
+                first_line = (lines[0] if lines else "").strip() or "Этикетка"
+                entry = {
+                    "id": time.time_ns(),
+                    "ts": time.time(),
+                    "preview_text": preview_text,
+                    "product": first_line,
+                    "qty": "",
+                    "made": "",
+                    "checked": "",
+                    "time": format_dt(datetime.now()),
+                    "batch": "",
+                }
+        else:
+            lines = preview_text.strip().splitlines()
+            first_line = (lines[0] if lines else "").strip() or "Этикетка"
+            entry = {
+                "id": time.time_ns(),
+                "ts": time.time(),
+                "preview_text": preview_text,
+                "product": first_line,
+                "qty": "",
+                "made": "",
+                "checked": "",
+                "time": format_dt(datetime.now()),
+                "batch": "",
+            }
+        self.last_history_entry = entry
+        self._append_history_entry(entry)
 
     def repeat_last_print(self):
-        if not self.last_tspl:
+        preview_text = getattr(self, "last_printed_preview_text", None)
+        if not (preview_text or "").strip():
             return
         try:
             printer_name = win32print.GetDefaultPrinter()
-            tspl = self._apply_copies_to_tspl(self.last_tspl, self._get_copies())
-            print_raw(printer_name, tspl)
-            # повтор также пишем в историю, если есть данные о последней этикетке
+            font_size_pt = self._base_font_size
+            try:
+                font_size_pt = int(self.font_size_combo.currentText().strip() or font_size_pt)
+            except Exception:
+                pass
+            font_size_pt = max(8, min(72, font_size_pt))
+            print_text_as_bitmap_tspl(
+                printer_name,
+                preview_text,
+                label_w_mm=58,
+                label_h_mm=80,
+                padding_mm=0.2,
+                font_size_pt=font_size_pt,
+            )
             if self.last_history_entry is not None:
                 e = dict(self.last_history_entry)
                 e["id"] = time.time_ns()
