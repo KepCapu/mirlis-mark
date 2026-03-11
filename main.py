@@ -10,6 +10,7 @@ import sys
 import os
 import time
 import math
+import json
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -31,6 +32,7 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QFontComboBox,
     QSpacerItem,
+    QFileDialog,
 )
 from PyQt6.QtCore import QTimer, Qt, QUrl, QSize
 from PyQt6.QtGui import (
@@ -61,6 +63,7 @@ import win32print
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 EXCEL_PATH = os.path.join(BASE_DIR, "data_sources", "products.xlsx")
+CONFIG_PATH = os.path.join(BASE_DIR, "settings.json")
 SHEET_PRODUCTS = "продукт"
 SHEET_MADE = "изготовил"
 SHEET_CHECKED = "проверил"
@@ -75,6 +78,26 @@ APP_SUBTITLE = "Система маркировки"
 
 
 # -------------------- HELPERS --------------------
+def _load_settings() -> dict:
+    """Загрузить настройки из settings.json."""
+    try:
+        if os.path.isfile(CONFIG_PATH):
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_settings(data: dict):
+    """Сохранить настройки в settings.json."""
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 def _fmt_dt_local(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M:%S")
 
@@ -204,6 +227,10 @@ class MirlisMarkApp(QWidget):
         self.staff_made = []
         self.staff_checked = []
         self.loaded_at_str = "—"
+
+        # путь к Excel (из настроек или дефолтный)
+        settings = _load_settings()
+        self.excel_path = settings.get("excel_path", EXCEL_PATH)
 
         # флаги чтобы редактор НЕ “откатывал” форматирование
         self._updating_preview = False
@@ -631,6 +658,10 @@ class MirlisMarkApp(QWidget):
         self.open_folder_btn.clicked.connect(self.open_excel_folder)
         top_layout.addWidget(self.open_folder_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self.choose_path_btn = ActionBtn("Выбрать путь", kind="default")
+        self.choose_path_btn.clicked.connect(self.choose_excel_path)
+        top_layout.addWidget(self.choose_path_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.clear_btn = ActionBtn("Очистить", kind="danger")
         self.clear_btn.clicked.connect(self.clear_fields)
         top_layout.addWidget(self.clear_btn, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -824,6 +855,8 @@ class MirlisMarkApp(QWidget):
         self.preview = QTextEdit()
         self.preview.setObjectName("PreviewEditor")
         self.preview.setAcceptRichText(True)
+        self.preview.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.preview.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         # Редактор предпросмотра: фиксированный “лист этикетки” 80×60 (высота больше ширины)
         # Масштаб в пикселях, пропорция 80/60 = 4/3.
@@ -1055,12 +1088,12 @@ class MirlisMarkApp(QWidget):
             made_combo = self.made_combo.currentText()
             checked_combo = self.checked_combo.currentText()
 
-            products_all = load_products(EXCEL_PATH)
+            products_all = load_products(self.excel_path)
             self.products = [p for p in products_all if int(p.get("active", 0)) == 1]
             self.products.sort(key=lambda x: (x.get("name") or "").lower())
 
-            self.staff_made = [s for s in load_staff(EXCEL_PATH, SHEET_MADE) if int(s.get("active", 0)) == 1]
-            self.staff_checked = [s for s in load_staff(EXCEL_PATH, SHEET_CHECKED) if int(s.get("active", 0)) == 1]
+            self.staff_made = [s for s in load_staff(self.excel_path, SHEET_MADE) if int(s.get("active", 0)) == 1]
+            self.staff_checked = [s for s in load_staff(self.excel_path, SHEET_CHECKED) if int(s.get("active", 0)) == 1]
 
             # excel_loader возвращает {"name": "..."} — а у нас UI ждёт fio.
             # поэтому нормализуем к "fio".
@@ -1114,7 +1147,7 @@ class MirlisMarkApp(QWidget):
             QMessageBox.critical(
                 self,
                 "Ошибка Excel",
-                f"Не удалось загрузить Excel.\n\nФайл: {EXCEL_PATH}\nОшибка: {e}",
+                f"Не удалось загрузить Excel.\n\nФайл: {self.excel_path}\nОшибка: {e}",
             )
 
     def fill_products(self, current_product: str | None = None):
@@ -1161,17 +1194,57 @@ class MirlisMarkApp(QWidget):
 
     def update_excel_status(self):
         try:
-            mtime = os.path.getmtime(EXCEL_PATH)
+            mtime = os.path.getmtime(self.excel_path)
             mtime_str = _fmt_dt_local(mtime)
         except Exception:
             mtime_str = "—"
 
-        # как в макете: “Excel: обновлено …”
-        self.excel_pill.setText(f"Excel: обновлено {mtime_str}")
+        default_dir = os.path.dirname(EXCEL_PATH)
+        current_dir = os.path.dirname(self.excel_path)
+        if os.path.normpath(current_dir) != os.path.normpath(default_dir):
+            short_path = current_dir
+            if len(short_path) > 40:
+                short_path = "..." + short_path[-37:]
+            self.excel_pill.setText(f"Excel: {short_path}\nобновлено {mtime_str}")
+        else:
+            self.excel_pill.setText(f"Excel: обновлено {mtime_str}")
 
     def open_excel_folder(self):
-        folder = os.path.dirname(EXCEL_PATH)
+        folder = os.path.dirname(self.excel_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def choose_excel_path(self):
+        current_dir = os.path.dirname(self.excel_path)
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Выберите папку с файлом products.xlsx",
+            current_dir,
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
+        )
+
+        if not folder:
+            return
+
+        new_path = os.path.join(folder, "products.xlsx")
+
+        if not os.path.isfile(new_path):
+            QMessageBox.warning(
+                self,
+                "Файл не найден",
+                f"В выбранной папке не найден файл products.xlsx.\n\n"
+                f"Путь: {folder}\n\n"
+                f"Убедитесь, что в папке есть файл products.xlsx "
+                f"с листами «продукт», «изготовил», «проверил».",
+            )
+            return
+
+        self.excel_path = new_path
+        settings = _load_settings()
+        settings["excel_path"] = new_path
+        _save_settings(settings)
+
+        self.reload_excel(show_message=True)
 
     # ---------------- Helpers ----------------
     def get_product(self, name: str):
