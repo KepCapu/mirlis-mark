@@ -1830,9 +1830,10 @@ class MirlisMarkApp(QWidget):
         threshold: int = 200,
     ) -> bytes:
         """
-        Рендерит QTextDocument из preview‑редактора в картинку с учётом
-        всего форматирования (жирный, курсив, выравнивание, размер шрифта),
-        затем конвертирует в TSPL BITMAP payload, готовый к отправке на принтер.
+        WYSIWYG-рендеринг: берём QTextDocument из preview-редактора
+        в тех же координатах, в которых пользователь видит его на экране,
+        и масштабируем в пиксели принтера (203 DPI, 58×80 мм).
+        Текст переносится ровно в тех же местах, что и в предпросмотре.
         """
         w_px = int(round(label_w_mm / 25.4 * dpi))
         h_px = int(round(label_h_mm / 25.4 * dpi))
@@ -1840,18 +1841,16 @@ class MirlisMarkApp(QWidget):
         # клонируем документ, чтобы не трогать редактор
         doc = self.preview.document().clone()
 
-        # масштаб: шрифты в документе заданы в pt и рендерятся для экрана (~96 dpi),
-        # а нам нужно 203 dpi принтера
-        screen_dpi = 96.0
-        try:
-            screen_dpi = self.screen().logicalDotsPerInch()
-        except Exception:
-            pass
-        scale = dpi / screen_dpi
+        # используем размер viewport'а редактора — это ровно то,
+        # что пользователь видит; текст уже уложен по этой ширине
+        vp_w = self.preview.viewport().width()
+        vp_h = self.preview.viewport().height()
 
-        # устанавливаем ширину страницы документа в «экранных» пикселях,
-        # QPainter потом масштабирует до принтерных
-        doc.setPageSize(QSizeF(w_px / scale, h_px / scale))
+        doc.setPageSize(QSizeF(vp_w, vp_h))
+
+        # масштаб: из экранных пикселей редактора → в пиксели принтера
+        scale_x = w_px / vp_w
+        scale_y = h_px / vp_h
 
         # рисуем на QImage в принтерном разрешении
         img = QImage(w_px, h_px, QImage.Format.Format_RGB32)
@@ -1860,7 +1859,7 @@ class MirlisMarkApp(QWidget):
         painter = QPainter(img)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        painter.scale(scale, scale)
+        painter.scale(scale_x, scale_y)
         doc.drawContents(painter)
         painter.end()
 
@@ -1874,15 +1873,11 @@ class MirlisMarkApp(QWidget):
                 for bit in range(8):
                     x = xb * 8 + bit
                     if x >= w_px:
-                        # за пределами — белый (бит = 1)
                         byte_val |= (1 << (7 - bit))
                         continue
-                    # серый = (R + G + B) / 3
                     pixel = img.pixel(x, y)
                     gray = ((pixel >> 16) & 0xFF) + ((pixel >> 8) & 0xFF) + (pixel & 0xFF)
                     gray = gray // 3
-                    # бит 1 = белый (не печатать), бит 0 = чёрный (печатать)
-                    # совпадает с логикой printer.py для 4B-2054L
                     if gray > threshold:
                         byte_val |= (1 << (7 - bit))
                 raster.append(byte_val)
