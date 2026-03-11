@@ -60,7 +60,11 @@ import win32print
 
 
 # -------------------- CONFIG --------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller: sys.executable указывает на exe, __file__ — на temp-папку
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 EXCEL_PATH = os.path.join(BASE_DIR, "data_sources", "products.xlsx")
 CONFIG_PATH = os.path.join(BASE_DIR, "settings.json")
@@ -261,9 +265,11 @@ class MirlisMarkApp(QWidget):
 
     # ---------------- STYLE ----------------
     def _apply_global_style(self):
+        # путь к SVG-кнопке (абсолютный, для совместимости с PyInstaller)
+        combo_btn_path = os.path.join(BASE_DIR, "assets", "combo-btn.svg").replace("\\", "/")
+
         # Важно: Qt НЕ поддерживает align-self, image-repeat и т.п. — не используем.
-        self.setStyleSheet(
-            """
+        _qss = """
             QWidget {
                 background: #f6f7f9;
                 font-family: "Segoe UI";
@@ -587,7 +593,8 @@ class MirlisMarkApp(QWidget):
                 color: #3730a3;
             }
             """
-        )
+        _qss = _qss.replace("url(assets/combo-btn.svg)", f"url({combo_btn_path})")
+        self.setStyleSheet(_qss)
 
     # ---------------- UI ----------------
     def init_ui(self):
@@ -1053,10 +1060,9 @@ class MirlisMarkApp(QWidget):
         self._resize_label_preview()
         # адаптивность: панель истории скрываем на узких окнах
         if hasattr(self, "history_panel"):
-            self.history_panel.setVisible(self.width() >= 1400)
+            self.history_panel.setVisible(self.width() >= 1100)
 
     def _resize_label_preview(self):
-        # Подгоняем “лист этикетки” под доступное место, сохраняя пропорцию 80×60 (4:3)
         if not hasattr(self, "preview_wrap"):
             return
         rect = self.preview_wrap.contentsRect()
@@ -1065,12 +1071,12 @@ class MirlisMarkApp(QWidget):
         if avail_w < 50 or avail_h < 50:
             return
 
-        target_w = min(avail_w, int(avail_h * 3 / 4)) - 10
-        target_w = max(260, target_w)
-        target_h = int(target_w * 4 / 3)
+        target_w = min(avail_w, int(avail_h * 58 / 80)) - 10
+        target_w = max(350, target_w)
+        target_h = int(target_w * 80 / 58)
 
         target_w = min(target_w, 520)
-        target_h = min(target_h, int(520 * 4 / 3))
+        target_h = min(target_h, int(520 * 80 / 58))
 
         self.preview.setFixedSize(int(target_w), int(target_h))
 
@@ -2106,6 +2112,22 @@ class MirlisMarkApp(QWidget):
 
 
 def main():
+    # Автомасштабирование: UI спроектирован для 1920×1080.
+    # На меньших экранах масштабируем всё пропорционально.
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.SetProcessDPIAware()
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
+        scale_w = screen_w / 1920
+        scale_h = screen_h / 1080
+        scale = min(scale_w, scale_h)
+        if scale < 0.95:
+            os.environ["QT_SCALE_FACTOR"] = str(round(scale, 3))
+    except Exception:
+        pass
+
     # OpenGL rendering для качественного отображения splash video (2K/4K)
     fmt = QSurfaceFormat()
     fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
