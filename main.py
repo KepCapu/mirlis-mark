@@ -1658,7 +1658,9 @@ class MirlisMarkApp(QWidget):
             # 1) весь текст — базовый шрифт
             cursor.select(QTextCursor.SelectionType.Document)
             fmt_base = QTextCharFormat()
-            fmt_base.setFont(QFont(font_family, self._base_font_size))
+            fmt_base.setFontFamily(font_family)
+            fmt_base.setFontPointSize(float(self._base_font_size))
+            fmt_base.setFontWeight(QFont.Weight.Normal)
             cursor.mergeCharFormat(fmt_base)
             cursor.clearSelection()
 
@@ -1669,7 +1671,9 @@ class MirlisMarkApp(QWidget):
                 cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
 
                 fmt_weekday = QTextCharFormat()
-                fmt_weekday.setFont(QFont(font_family, 26, QFont.Weight.Bold))
+                fmt_weekday.setFontFamily(font_family)
+                fmt_weekday.setFontPointSize(26.0)
+                fmt_weekday.setFontWeight(QFont.Weight.Bold)
                 cursor.mergeCharFormat(fmt_weekday)
 
                 block_fmt = QTextBlockFormat()
@@ -1765,6 +1769,10 @@ class MirlisMarkApp(QWidget):
         if self._user_edited_preview:
             return
 
+        # если пользователь работает в редакторе (фокус/выделение) — не сбрасываем
+        if self.preview.hasFocus():
+            return
+
         self._set_preview_text_programmatically(text)
 
     def _on_preview_text_changed(self):
@@ -1805,21 +1813,36 @@ class MirlisMarkApp(QWidget):
         self._sync_format_toolbar_from_cursor()
 
     def _sync_format_toolbar_from_cursor(self):
-        """Синхронизация состояний Ж/К/Ч с текущим форматированием, как в Word."""
+        """Синхронизация состояний Ж/К/Ч и выравнивания с текущим форматированием, как в Word."""
         cursor = self.preview.textCursor()
         fmt = cursor.charFormat() if cursor.charFormat().isValid() else self.preview.currentCharFormat()
 
         self.btn_bold.blockSignals(True)
         self.btn_italic.blockSignals(True)
         self.btn_underline.blockSignals(True)
+        self.btn_align_left.blockSignals(True)
+        self.btn_align_center.blockSignals(True)
+        self.btn_align_right.blockSignals(True)
+        self.btn_align_justify.blockSignals(True)
         try:
             self.btn_bold.setChecked(fmt.fontWeight() >= QFont.Weight.Bold)
             self.btn_italic.setChecked(fmt.fontItalic())
             self.btn_underline.setChecked(fmt.fontUnderline())
+
+            # выравнивание — из блочного формата текущего абзаца
+            align = cursor.blockFormat().alignment()
+            self.btn_align_left.setChecked(align == Qt.AlignmentFlag.AlignLeft)
+            self.btn_align_center.setChecked(align == Qt.AlignmentFlag.AlignHCenter)
+            self.btn_align_right.setChecked(align == Qt.AlignmentFlag.AlignRight)
+            self.btn_align_justify.setChecked(align == Qt.AlignmentFlag.AlignJustify)
         finally:
             self.btn_bold.blockSignals(False)
             self.btn_italic.blockSignals(False)
             self.btn_underline.blockSignals(False)
+            self.btn_align_left.blockSignals(False)
+            self.btn_align_center.blockSignals(False)
+            self.btn_align_right.blockSignals(False)
+            self.btn_align_justify.blockSignals(False)
 
         # параллельно обновляем UI размера шрифта
         self._sync_font_size_from_cursor()
@@ -1827,7 +1850,7 @@ class MirlisMarkApp(QWidget):
     def _sync_font_size_from_cursor(self):
         """
         Синхронизировать поле размера шрифта с текущей позицией курсора
-        (как в Word).
+        (как в Word). Только отображение — не меняет _base_font_size.
         """
         if not hasattr(self, "font_size_combo"):
             return
@@ -1837,17 +1860,16 @@ class MirlisMarkApp(QWidget):
 
         size = fmt.fontPointSize()
         if size <= 0:
-            # если размер не задан явно в формате — считаем, что используется базовый
+            size = fmt.font().pointSizeF()
+        if size <= 0:
             size = float(self._base_font_size)
 
         size_int = int(round(size))
         if size_int <= 0:
             size_int = self._base_font_size
 
-        self._base_font_size = size_int
-
         self.font_size_combo.blockSignals(True)
-        self.font_size_combo.setCurrentText(str(size_int))
+        self.font_size_combo.lineEdit().setText(str(size_int))
         self.font_size_combo.blockSignals(False)
 
     def _set_alignment(self, align_flag: Qt.AlignmentFlag):
@@ -1861,6 +1883,7 @@ class MirlisMarkApp(QWidget):
             self.preview.setAlignment(Qt.AlignmentFlag.AlignRight)
         elif align_flag == Qt.AlignmentFlag.AlignJustify:
             self.preview.setAlignment(Qt.AlignmentFlag.AlignJustify)
+        self._sync_format_toolbar_from_cursor()
 
     def _set_font_family_on_selection(self, font: QFont):
         fmt = QTextCharFormat()
