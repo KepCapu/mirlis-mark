@@ -39,6 +39,7 @@ from PyQt6.QtGui import (
     QPixmap,
     QFont,
     QTextCharFormat,
+    QTextBlockFormat,
     QTextCursor,
     QSurfaceFormat,
     QImage,
@@ -209,7 +210,7 @@ class MirlisMarkApp(QWidget):
         self._user_edited_preview = False
 
         # базовый размер шрифта в редакторе
-        self._base_font_size = 12
+        self._base_font_size = 20
 
         # состояние истории (должно существовать до init_ui / _rebuild_history_view)
         self.history_entries: list[dict] = []
@@ -1570,22 +1571,39 @@ class MirlisMarkApp(QWidget):
 
     def _set_preview_text_programmatically(self, text: str):
         """
-        Вставка текста в редактор так, чтобы:
-        - не сбивалось выделение
-        - не считалось “пользовательским редактированием”
-        - не откатывалось форматирование
+        Вставка текста в редактор с дефолтным форматированием:
+        - весь текст: размер _base_font_size (20)
+        - первая строка (день недели): жирный, размер 26, по центру
         """
         self._updating_preview = True
         try:
             self.preview.blockSignals(True)
             self.preview.setPlainText(text)
-            # базовый шрифт документа
-            self.preview.selectAll()
+
+            font_family = self.font_combo.currentFont().family()
             cursor = self.preview.textCursor()
-            fmt = QTextCharFormat()
-            fmt.setFont(QFont(self.font_combo.currentFont().family(), self._base_font_size))
-            cursor.mergeCharFormat(fmt)
+
+            # 1) весь текст — базовый шрифт
+            cursor.select(QTextCursor.SelectionType.Document)
+            fmt_base = QTextCharFormat()
+            fmt_base.setFont(QFont(font_family, self._base_font_size))
+            cursor.mergeCharFormat(fmt_base)
             cursor.clearSelection()
+
+            # 2) первая строка — жирный, 26pt, по центру
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+
+            fmt_weekday = QTextCharFormat()
+            fmt_weekday.setFont(QFont(font_family, 26, QFont.Weight.Bold))
+            cursor.mergeCharFormat(fmt_weekday)
+
+            block_fmt = QTextBlockFormat()
+            block_fmt.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            cursor.mergeBlockFormat(block_fmt)
+
+            cursor.clearSelection()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
             self.preview.setTextCursor(cursor)
         finally:
             self.preview.blockSignals(False)
@@ -1849,6 +1867,7 @@ class MirlisMarkApp(QWidget):
         density: int = 10,
         speed: int = 4,
         threshold: int = 200,
+        copies: int = 1,
     ) -> bytes:
         """
         WYSIWYG-рендеринг: берём QTextDocument из preview-редактора
@@ -1914,7 +1933,7 @@ class MirlisMarkApp(QWidget):
             f"BITMAP 0,0,{width_bytes},{h_px},0,"
         ).encode("ascii")
 
-        tail = b"\r\nPRINT 1\r\n"
+        tail = f"\r\nPRINT {copies}\r\n".encode("ascii")
 
         return header + bytes(raster) + tail
 
@@ -1929,7 +1948,7 @@ class MirlisMarkApp(QWidget):
         printer_name = win32print.GetDefaultPrinter()
 
         try:
-            tspl_bytes = self._render_preview_to_tspl_bytes(threshold=200)
+            tspl_bytes = self._render_preview_to_tspl_bytes(threshold=200, copies=self._get_copies())
             n_bytes = print_raw(printer_name, tspl_bytes)
             print("SENDING BITMAP...", n_bytes, "bytes")
         except Exception as e:
@@ -2003,6 +2022,11 @@ class MirlisMarkApp(QWidget):
             return
         try:
             printer_name = win32print.GetDefaultPrinter()
+            # подставляем текущее количество копий
+            copies = self._get_copies()
+            if copies != 1:
+                # заменяем PRINT N в сохранённых байтах
+                tspl_bytes = tspl_bytes.rsplit(b"\r\nPRINT ", 1)[0] + f"\r\nPRINT {copies}\r\n".encode("ascii")
             print_raw(printer_name, tspl_bytes)
             if self.last_history_entry is not None:
                 e = dict(self.last_history_entry)
