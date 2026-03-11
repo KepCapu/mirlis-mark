@@ -502,40 +502,31 @@ class MirlisMarkApp(QWidget):
                 border: 1px solid #94a3b8;
             }
 
-            /* правая зона — светлая кнопка со скруглением и стрелкой */
+            /* правая зона — SVG-кнопка как фон drop-down */
             QComboBox::drop-down,
             QFontComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 42px;
-                margin: 3px 3px 3px 0;
+                subcontrol-origin: border;
+                subcontrol-position: center right;
+                width: 36px;
                 border: none;
-                border-left: 1px solid #e2e8f0;
-                background: #f1f5f9;
-                border-radius: 8px;
-                border-top-left-radius: 0;
-                border-bottom-left-radius: 0;
+                background: transparent;
+                margin-right: 4px;
+                image: url(assets/combo-btn.svg);
             }
 
-            QComboBox::drop-down:hover,
-            QFontComboBox::drop-down:hover {
-                background: #e2e8f0;
-            }
-
+            /* down-arrow полностью убран — визуал целиком через drop-down */
             QComboBox::down-arrow,
             QFontComboBox::down-arrow {
-                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2720%27%20height%3D%2720%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%23374151%27%20stroke-width%3D%272.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
-                width: 20px;
-                height: 20px;
-                margin-right: 2px;
+                image: none;
+                width: 0px;
+                height: 0px;
             }
 
             QComboBox:disabled::down-arrow,
             QFontComboBox:disabled::down-arrow {
-                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2720%27%20height%3D%2720%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%239ca3af%27%20stroke-width%3D%272.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
-                width: 20px;
-                height: 20px;
-                margin-right: 2px;
+                image: none;
+                width: 0px;
+                height: 0px;
             }
 
             /* выпадающий список: светлый фон, скругления, мягкий hover/selection */
@@ -1569,6 +1560,8 @@ class MirlisMarkApp(QWidget):
         val = self.checked_combo.currentText().strip()
         return "" if val.startswith("—") else val
 
+    _WEEKDAYS = {"ПОНЕДЕЛЬНИК", "ВТОРНИК", "СРЕДА", "ЧЕТВЕРГ", "ПЯТНИЦА", "СУББОТА", "ВОСКРЕСЕНЬЕ"}
+
     def _set_preview_text_programmatically(self, text: str):
         """
         Вставка текста в редактор с дефолтным форматированием:
@@ -1590,17 +1583,19 @@ class MirlisMarkApp(QWidget):
             cursor.mergeCharFormat(fmt_base)
             cursor.clearSelection()
 
-            # 2) первая строка — жирный, 26pt, по центру
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            # 2) первая строка — жирный, 26pt, по центру (only if it’s a weekday)
+            first_line = text.strip().split("\n")[0].strip()
+            if first_line in self._WEEKDAYS:
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
 
-            fmt_weekday = QTextCharFormat()
-            fmt_weekday.setFont(QFont(font_family, 26, QFont.Weight.Bold))
-            cursor.mergeCharFormat(fmt_weekday)
+                fmt_weekday = QTextCharFormat()
+                fmt_weekday.setFont(QFont(font_family, 26, QFont.Weight.Bold))
+                cursor.mergeCharFormat(fmt_weekday)
 
-            block_fmt = QTextBlockFormat()
-            block_fmt.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            cursor.mergeBlockFormat(block_fmt)
+                block_fmt = QTextBlockFormat()
+                block_fmt.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+                cursor.mergeBlockFormat(block_fmt)
 
             cursor.clearSelection()
             cursor.movePosition(QTextCursor.MoveOperation.Start)
