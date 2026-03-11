@@ -41,7 +41,11 @@ from PyQt6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QSurfaceFormat,
+    QImage,
+    QPainter,
+    QColor,
 )
+from PyQt6.QtCore import QSizeF
 from PyQt6.QtCore import QStringListModel
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
@@ -191,6 +195,7 @@ class MirlisMarkApp(QWidget):
 
         # печать (последний напечатанный текст для «Повторить»)
         self.last_printed_preview_text: str | None = None
+        self._last_printed_tspl_bytes: bytes | None = None
         self.last_history_entry: dict | None = None
 
         # данные
@@ -1814,6 +1819,89 @@ class MirlisMarkApp(QWidget):
                 return "\n".join(lines).strip()
         return (tspl.strip() + f"\nPRINT {copies}").strip()
 
+# ---------------- Rendering preview → TSPL bitmap ----------------
+    def _render_preview_to_tspl_bytes(
+        self,
+        label_w_mm: float = 58,
+        label_h_mm: float = 80,
+        dpi: int = 203,
+        density: int = 10,
+        speed: int = 4,
+        threshold: int = 200,
+    ) -> bytes:
+        """
+        Рендерит QTextDocument из preview‑редактора в картинку с учётом
+        всего форматирования (жирный, курсив, выравнивание, размер шрифта),
+        затем конвертирует в TSPL BITMAP payload, готовый к отправке на принтер.
+        """
+        w_px = int(round(label_w_mm / 25.4 * dpi))
+        h_px = int(round(label_h_mm / 25.4 * dpi))
+
+        # клонируем документ, чтобы не трогать редактор
+        doc = self.preview.document().clone()
+
+        # масштаб: шрифты в документе заданы в pt и рендерятся для экрана (~96 dpi),
+        # а нам нужно 203 dpi принтера
+        screen_dpi = 96.0
+        try:
+            screen_dpi = self.screen().logicalDotsPerInch()
+        except Exception:
+            pass
+        scale = dpi / screen_dpi
+
+        # устанавливаем ширину страницы документа в «экранных» пикселях,
+        # QPainter потом масштабирует до принтерных
+        doc.setPageSize(QSizeF(w_px / scale, h_px / scale))
+
+        # рисуем на QImage в принтерном разрешении
+        img = QImage(w_px, h_px, QImage.Format.Format_RGB32)
+        img.fill(QColor(255, 255, 255))
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.scale(scale, scale)
+        doc.drawContents(painter)
+        painter.end()
+
+        # --- конвертация в 1-bit TSPL bitmap ---
+        width_bytes = (w_px + 7) // 8
+        raster = bytearray()
+
+        for y in range(h_px):
+            for xb in range(width_bytes):
+                byte_val = 0
+                for bit in range(8):
+                    x = xb * 8 + bit
+                    if x >= w_px:
+                        # за пределами — белый (бит = 1)
+                        byte_val |= (1 << (7 - bit))
+                        continue
+                    # серый = (R + G + B) / 3
+                    pixel = img.pixel(x, y)
+                    gray = ((pixel >> 16) & 0xFF) + ((pixel >> 8) & 0xFF) + (pixel & 0xFF)
+                    gray = gray // 3
+                    # бит 1 = белый (не печатать), бит 0 = чёрный (печатать)
+                    # совпадает с логикой printer.py для 4B-2054L
+                    if gray > threshold:
+                        byte_val |= (1 << (7 - bit))
+                raster.append(byte_val)
+
+        header = (
+            f"SIZE {label_w_mm} mm, {label_h_mm} mm\r\n"
+            f"GAP 2 mm, 0 mm\r\n"
+            f"SPEED {speed}\r\n"
+            f"DENSITY {density}\r\n"
+            f"DIRECTION 1\r\n"
+            f"REFERENCE 0,0\r\n"
+            f"CLS\r\n"
+            f"BITMAP 0,0,{width_bytes},{h_px},0,"
+        ).encode("ascii")
+
+        tail = b"\r\nPRINT 1\r\n"
+
+        return header + bytes(raster) + tail
+
 # ---------------- Printing ----------------
     def print_label(self):
         preview_text = self.preview.toPlainText()
@@ -1823,22 +1911,9 @@ class MirlisMarkApp(QWidget):
 
         printer_name = win32print.GetDefaultPrinter()
 
-        font_size_pt = self._base_font_size
         try:
-            font_size_pt = int(self.font_size_combo.currentText().strip() or font_size_pt)
-        except Exception:
-            pass
-        font_size_pt = max(26, min(72, font_size_pt))
-
-        try:
-            n_bytes = print_text_as_bitmap_tspl(
-                printer_name,
-                preview_text,
-                label_w_mm=58,
-                label_h_mm=80,
-                padding_mm=0.2,
-                font_size_pt=font_size_pt,
-            )
+            tspl_bytes = self._render_preview_to_tspl_bytes(threshold=200)
+            n_bytes = print_raw(printer_name, tspl_bytes)
             print("SENDING BITMAP...", n_bytes, "bytes")
         except Exception as e:
             QMessageBox.warning(self, "Печать", f"Не удалось отправить на печать:\n{e}")
@@ -1846,6 +1921,7 @@ class MirlisMarkApp(QWidget):
 
         self.repeat_btn.setEnabled(True)
         self.last_printed_preview_text = preview_text
+        self._last_printed_tspl_bytes = tspl_bytes
 
         # только после успешной печати — в историю (старая структура entry для отображения)
         product_name = self.product_combo.currentText().strip()
@@ -1902,25 +1978,12 @@ class MirlisMarkApp(QWidget):
         self._append_history_entry(entry)
 
     def repeat_last_print(self):
-        preview_text = getattr(self, "last_printed_preview_text", None)
-        if not (preview_text or "").strip():
+        tspl_bytes = getattr(self, "_last_printed_tspl_bytes", None)
+        if not tspl_bytes:
             return
         try:
             printer_name = win32print.GetDefaultPrinter()
-            font_size_pt = self._base_font_size
-            try:
-                font_size_pt = int(self.font_size_combo.currentText().strip() or font_size_pt)
-            except Exception:
-                pass
-            font_size_pt = max(8, min(72, font_size_pt))
-            print_text_as_bitmap_tspl(
-                printer_name,
-                preview_text,
-                label_w_mm=58,
-                label_h_mm=80,
-                padding_mm=0.2,
-                font_size_pt=font_size_pt,
-            )
+            print_raw(printer_name, tspl_bytes)
             if self.last_history_entry is not None:
                 e = dict(self.last_history_entry)
                 e["id"] = time.time_ns()
