@@ -1449,11 +1449,16 @@ class MirlisMarkApp(QWidget):
                 w.blockSignals(False)
             self._loading_from_history = False
 
-        # предпросмотр выбранной записи
+        # предпросмотр выбранной записи (HTML сохраняет форматирование)
+        preview_html = entry.get("preview_html")
         preview_text = entry.get("preview_text")
-        if isinstance(preview_text, str) and preview_text.strip():
+        if isinstance(preview_html, str) and preview_html.strip():
+            self._set_preview_html_programmatically(preview_html)
+            self._user_edited_preview = True
+            _, can_print = self._build_label_plain_text()
+            self.print_btn.setEnabled(can_print)
+        elif isinstance(preview_text, str) and preview_text.strip():
             self._set_preview_text_programmatically(preview_text)
-            # фиксируем, чтобы таймер не перетирал выбранную историю
             self._user_edited_preview = True
             _, can_print = self._build_label_plain_text()
             self.print_btn.setEnabled(can_print)
@@ -1581,6 +1586,22 @@ class MirlisMarkApp(QWidget):
             fmt.setFont(QFont(self.font_combo.currentFont().family(), self._base_font_size))
             cursor.mergeCharFormat(fmt)
             cursor.clearSelection()
+            self.preview.setTextCursor(cursor)
+        finally:
+            self.preview.blockSignals(False)
+            self._updating_preview = False
+
+    def _set_preview_html_programmatically(self, html: str):
+        """
+        Восстановление HTML-форматирования в редактор (жирный, курсив, выравнивание и т.д.)
+        без срабатывания «пользовательского редактирования».
+        """
+        self._updating_preview = True
+        try:
+            self.preview.blockSignals(True)
+            self.preview.setHtml(html)
+            cursor = self.preview.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
             self.preview.setTextCursor(cursor)
         finally:
             self.preview.blockSignals(False)
@@ -1900,6 +1921,7 @@ class MirlisMarkApp(QWidget):
 # ---------------- Printing ----------------
     def print_label(self):
         preview_text = self.preview.toPlainText()
+        preview_html = self.preview.toHtml()
         if not (preview_text or "").strip():
             QMessageBox.warning(self, "Печать", "Предпросмотр пуст. Заполните форму или введите текст в предпросмотр.")
             return
@@ -1941,6 +1963,7 @@ class MirlisMarkApp(QWidget):
                     unit_ui=unit_ui,
                 )
                 entry["preview_text"] = preview_text
+                entry["preview_html"] = preview_html
             except Exception:
                 lines = preview_text.strip().splitlines()
                 first_line = (lines[0] if lines else "").strip() or "Этикетка"
@@ -1948,6 +1971,7 @@ class MirlisMarkApp(QWidget):
                     "id": time.time_ns(),
                     "ts": time.time(),
                     "preview_text": preview_text,
+                    "preview_html": preview_html,
                     "product": first_line,
                     "qty": "",
                     "made": "",
@@ -1962,6 +1986,7 @@ class MirlisMarkApp(QWidget):
                 "id": time.time_ns(),
                 "ts": time.time(),
                 "preview_text": preview_text,
+                "preview_html": preview_html,
                 "product": first_line,
                 "qty": "",
                 "made": "",
