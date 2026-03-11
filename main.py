@@ -9,6 +9,7 @@
 import sys
 import os
 import time
+import math
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -39,8 +40,11 @@ from PyQt6.QtGui import (
     QFont,
     QTextCharFormat,
     QTextCursor,
+    QSurfaceFormat,
 )
 from PyQt6.QtCore import QStringListModel
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimediaWidgets import QVideoWidget
 
 from excel_loader import load_products, load_staff
 from label_logic import build_label, format_dt
@@ -57,6 +61,7 @@ SHEET_MADE = "изготовил"
 SHEET_CHECKED = "проверил"
 
 LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+SPLASH_VIDEO_PATH = os.path.join(BASE_DIR, "assets", "loadingscreen.mp4")
 
 APP_TITLE = "Mirlis Mark — Система маркировки"
 APP_MARK = "Mark"
@@ -134,6 +139,47 @@ class ActionBtn(QPushButton):
         self.setObjectName(f"Btn_{kind}")
 
 
+# -------------------- SPLASH VIDEO --------------------
+class SplashVideo(QWidget):
+    """Окно загрузки с воспроизведением видео перед запуском основного приложения."""
+
+    def __init__(self, video_path: str, on_finished_callback=None, parent=None):
+        super().__init__(parent)
+        self._on_finished = on_finished_callback
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet("background-color: #000000;")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._video_widget = QVideoWidget()
+        self._video_widget.setStyleSheet("background-color: #000000;")
+        self._video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+        layout.addWidget(self._video_widget)
+
+        self._player = QMediaPlayer()
+        self._audio_output = QAudioOutput()
+        self._player.setAudioOutput(self._audio_output)
+        self._player.setVideoOutput(self._video_widget)
+        self._player.setSource(QUrl.fromLocalFile(video_path))
+        self._player.mediaStatusChanged.connect(self._on_media_status_changed)
+
+    def _on_media_status_changed(self, status):
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if callable(self._on_finished):
+                self._on_finished()
+            self.close()
+
+    def play(self):
+        self._player.play()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._player.play()
+
+
 # -------------------- MAIN APP --------------------
 class MirlisMarkApp(QWidget):
     def __init__(self):
@@ -164,7 +210,7 @@ class MirlisMarkApp(QWidget):
         self.history_entries: list[dict] = []
         self._history_filter_text: str = ""
         self.history_page: int = 0
-        self.history_page_size: int = 10
+        self.history_page_size: int = 6
         self._loading_from_history = False
         self._selected_history_id = None
 
@@ -428,15 +474,16 @@ class MirlisMarkApp(QWidget):
                 border-color: #4f46e5;
             }
 
-            /* выпадающие списки с визуальной стрелкой */
+            /* выпадающие списки: светлое поле + аккуратная кнопка-стрелка справа */
             QComboBox,
             QFontComboBox {
                 min-height: 40px;
-                padding: 0 40px 0 12px; /* место под стрелку справа */
+                padding: 0 44px 0 14px;
                 border: 1px solid #cfd6e0;
                 border-radius: 12px;
-                background: #f9fafb;
+                background: #ffffff;
                 font-size: 14px;
+                color: #111827;
             }
 
             QComboBox:editable,
@@ -444,44 +491,76 @@ class MirlisMarkApp(QWidget):
                 background: #ffffff;
             }
 
+            QComboBox:focus,
+            QFontComboBox:focus {
+                border: 1px solid #94a3b8;
+            }
+
+            /* правая зона — светлая кнопка со скруглением и стрелкой */
             QComboBox::drop-down,
             QFontComboBox::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 40px;
-                border-left: 1px solid #cfd6e0;
-                background: #f3f4f6;
-                border-top-right-radius: 12px;
-                border-bottom-right-radius: 12px;
+                width: 42px;
+                margin: 3px 3px 3px 0;
+                border: none;
+                border-left: 1px solid #e2e8f0;
+                background: #f1f5f9;
+                border-radius: 8px;
+                border-top-left-radius: 0;
+                border-bottom-left-radius: 0;
+            }
+
+            QComboBox::drop-down:hover,
+            QFontComboBox::drop-down:hover {
+                background: #e2e8f0;
             }
 
             QComboBox::down-arrow,
             QFontComboBox::down-arrow {
-                /* chevron-down через встроенный SVG (percent-encoded, без внешнего файла) */
-                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2718%27%20height%3D%2718%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%236b7280%27%20stroke-width%3D%272.6%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
-                width: 18px;
-                height: 18px;
-                margin-right: 10px;
+                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2720%27%20height%3D%2720%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%23374151%27%20stroke-width%3D%272.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
+                width: 20px;
+                height: 20px;
+                margin-right: 2px;
             }
 
             QComboBox:disabled::down-arrow,
             QFontComboBox:disabled::down-arrow {
-                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2718%27%20height%3D%2718%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%239ca3af%27%20stroke-width%3D%272.6%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
-                width: 18px;
-                height: 18px;
-                margin-right: 10px;
+                image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2720%27%20height%3D%2720%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27%20fill%3D%27none%27%20stroke%3D%27%239ca3af%27%20stroke-width%3D%272.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E");
+                width: 20px;
+                height: 20px;
+                margin-right: 2px;
             }
 
-            /* выпадающий список */
+            /* выпадающий список: светлый фон, скругления, мягкий hover/selection */
             QComboBox QAbstractItemView,
             QFontComboBox QAbstractItemView {
                 background: #ffffff;
-                border: 1px solid #cfd6e0;
-                border-radius: 10px;
-                selection-background-color: #e5f3ec;
-                selection-color: #14532d;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                selection-background-color: #eef2ff;
+                selection-color: #3730a3;
                 outline: none;
-                padding: 6px;
+                padding: 8px 4px;
+                margin: 4px 0 0 0;
+            }
+
+            QComboBox QAbstractItemView::item,
+            QFontComboBox QAbstractItemView::item {
+                min-height: 32px;
+                padding: 4px 12px;
+                border-radius: 8px;
+            }
+
+            QComboBox QAbstractItemView::item:hover,
+            QFontComboBox QAbstractItemView::item:hover {
+                background: #f1f5f9;
+            }
+
+            QComboBox QAbstractItemView::item:selected,
+            QFontComboBox QAbstractItemView::item:selected {
+                background: #eef2ff;
+                color: #3730a3;
             }
             """
         )
@@ -853,9 +932,9 @@ class MirlisMarkApp(QWidget):
         pager_row = QHBoxLayout()
         pager_row.setSpacing(8)
 
-        self.history_prev_btn = ActionBtn("‹", kind="default")
-        self.history_next_btn = ActionBtn("›", kind="default")
-        self.history_page_label = QLabel("Стр. 1 / 1")
+        self.history_prev_btn = ActionBtn("←", kind="default")
+        self.history_next_btn = ActionBtn("→", kind="default")
+        self.history_page_label = QLabel("Страница 1 из 1")
         self.history_page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.history_page_label.setStyleSheet("color: #6b7280; font-size: 12px;")
 
@@ -1139,19 +1218,19 @@ class MirlisMarkApp(QWidget):
         if not hasattr(self, "history_list_layout"):
             return
 
-        entries = self._filtered_history_entries()
-        total = len(entries)
+        filtered_history = self._filtered_history_entries()
+        total = len(filtered_history)
         page_size = max(1, self.history_page_size)
-        pages = max(1, (total + page_size - 1) // page_size)
+        pages = max(1, math.ceil(total / page_size))
         self.history_page = max(0, min(self.history_page, pages - 1))
 
         start = self.history_page * page_size
         end = start + page_size
-        page_entries = entries[start:end]
+        page_items = filtered_history[start:end]
 
         self._clear_layout(self.history_list_layout)  # type: ignore[arg-type]
 
-        for e in page_entries:
+        for e in page_items:
             card = QFrame()
             card.setObjectName("HistoryCard")
             card.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1212,7 +1291,7 @@ class MirlisMarkApp(QWidget):
 
         # обновим подпись и активность кнопок пагинации
         if hasattr(self, "history_page_label"):
-            self.history_page_label.setText(f"Стр. {self.history_page + 1} / {pages}")
+            self.history_page_label.setText(f"Страница {self.history_page + 1} из {pages}")
         if hasattr(self, "history_prev_btn"):
             self.history_prev_btn.setEnabled(self.history_page > 0)
         if hasattr(self, "history_next_btn"):
@@ -1852,12 +1931,26 @@ class MirlisMarkApp(QWidget):
 
 
 def main():
+    # OpenGL rendering для качественного отображения splash video (2K/4K)
+    fmt = QSurfaceFormat()
+    fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
+    QSurfaceFormat.setDefaultFormat(fmt)
 
     app = QApplication(sys.argv)
-    w = MirlisMarkApp()
+    main_window = None
 
-    # старт сразу в развёрнутом окне
-    w.showMaximized()
+    def on_splash_finished():
+        nonlocal main_window
+        main_window = MirlisMarkApp()
+        main_window.showMaximized()
+
+    video_path = SPLASH_VIDEO_PATH
+    if os.path.isfile(video_path):
+        splash = SplashVideo(video_path, on_finished_callback=on_splash_finished)
+        splash.showFullScreen()
+        splash.play()
+    else:
+        on_splash_finished()
 
     sys.exit(app.exec())
 
