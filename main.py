@@ -729,12 +729,18 @@ class MirlisMarkApp(QWidget):
 
         self.minus_btn = ActionBtn("−", kind="default")
         self.minus_btn.setFixedWidth(60)
+        self.minus_btn.setAutoRepeat(True)
+        self.minus_btn.setAutoRepeatDelay(400)
+        self.minus_btn.setAutoRepeatInterval(80)
 
         self.qty_input = QLineEdit()
         self.qty_input.setPlaceholderText("Введите количество")
 
         self.plus_btn = ActionBtn("+", kind="default")
         self.plus_btn.setFixedWidth(60)
+        self.plus_btn.setAutoRepeat(True)
+        self.plus_btn.setAutoRepeatDelay(400)
+        self.plus_btn.setAutoRepeatInterval(80)
 
         qty_row.addWidget(self.minus_btn)
         qty_row.addWidget(self.qty_input, 1)
@@ -891,7 +897,14 @@ class MirlisMarkApp(QWidget):
 
         right_layout.addWidget(self.preview_wrap, 1)
 
-        # print row
+        # оборачиваем правую карточку предпросмотра в отдельный контейнер (центр)
+        center_panel = QWidget()
+        center_panel_layout = QVBoxLayout(center_panel)
+        center_panel_layout.setContentsMargins(0, 0, 0, 0)
+        center_panel_layout.setSpacing(10)
+        center_panel_layout.addWidget(self.card_right)
+
+        # print row — ВНЕ белой карточки, на сером фоне
         pr = QHBoxLayout()
         pr.setSpacing(12)
 
@@ -903,11 +916,17 @@ class MirlisMarkApp(QWidget):
         self.copies_btn = ActionBtn("Количество", kind="secondary")
         self.copies_minus = ActionBtn("−", kind="default")
         self.copies_minus.setFixedWidth(44)
+        self.copies_minus.setAutoRepeat(True)
+        self.copies_minus.setAutoRepeatDelay(400)
+        self.copies_minus.setAutoRepeatInterval(80)
         self.copies_input = QLineEdit("1")
         self.copies_input.setFixedWidth(60)
         self.copies_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.copies_plus = ActionBtn("+", kind="default")
         self.copies_plus.setFixedWidth(44)
+        self.copies_plus.setAutoRepeat(True)
+        self.copies_plus.setAutoRepeatDelay(400)
+        self.copies_plus.setAutoRepeatInterval(80)
 
         copies_wrap = QWidget()
         cw = QHBoxLayout(copies_wrap)
@@ -930,14 +949,7 @@ class MirlisMarkApp(QWidget):
         pr.addWidget(self.repeat_btn, 1)
         pr.addWidget(copies_wrap, 1)
 
-        right_layout.addLayout(pr)
-
-        # оборачиваем правую карточку предпросмотра в отдельный контейнер (центр)
-        center_panel = QWidget()
-        center_panel_layout = QVBoxLayout(center_panel)
-        center_panel_layout.setContentsMargins(0, 0, 0, 0)
-        center_panel_layout.setSpacing(0)
-        center_panel_layout.addWidget(self.card_right)
+        center_panel_layout.addLayout(pr)
 
         # -------- History panel (right) --------
         self.history_panel = QWidget()
