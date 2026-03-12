@@ -154,6 +154,21 @@ class ComboBoxFixedArrow(QComboBox):
         self.setObjectName("ComboWithArrow")
 
 
+class ComboBoxPopupDown(ComboBoxFixedArrow):
+    """
+    Комбобокс, у которого выпадающий список всегда раскрывается вниз.
+    Используется для поля «Цех», т.к. оно внизу левой панели и по умолчанию popup открывается вверх.
+    """
+
+    def showPopup(self):
+        super().showPopup()
+        view = self.view()
+        if view and view.window():
+            popup = view.window()
+            bottom_left = self.mapToGlobal(self.rect().bottomLeft())
+            popup.move(bottom_left.x(), bottom_left.y())
+
+
 class ToolBtn(QToolButton):
     def __init__(self, text="", parent=None):
         super().__init__(parent)
@@ -701,6 +716,7 @@ class MirlisMarkApp(QWidget):
         self.product_combo.setEditable(True)
         self.product_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.product_combo.setPlaceholderText("Введите продукт или выберите из списка")
+        self.product_combo.setMaxVisibleItems(8)
         left_layout.addWidget(self.product_combo)
 
         # completer for product
@@ -761,6 +777,7 @@ class MirlisMarkApp(QWidget):
 
         self.made_combo = ComboBoxFixedArrow()
         self.made_combo.addItem("— не выбрано —")
+        self.made_combo.setMaxVisibleItems(8)
         left_layout.addWidget(self.made_combo)
 
         self.made_manual = QCheckBox("Ручной ввод")
@@ -777,8 +794,9 @@ class MirlisMarkApp(QWidget):
         lab_chk.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         left_layout.addWidget(lab_chk)
 
-        self.checked_combo = ComboBoxFixedArrow()
+        self.checked_combo = ComboBoxPopupDown()
         self.checked_combo.addItem("— не выбрано —")
+        self.checked_combo.setMaxVisibleItems(8)
         left_layout.addWidget(self.checked_combo)
 
         self.checked_manual = QCheckBox("Ручной ввод")
