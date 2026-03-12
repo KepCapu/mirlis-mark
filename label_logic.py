@@ -80,7 +80,7 @@ TEXT 20,130,"0",0,1,1,"Дата/время: {format_dt(label.produced_at)}"
 TEXT 20,160,"0",0,1,1,"№ партии: {label.batch}"
 TEXT 20,190,"0",0,1,1,"Годен до: {format_dt(label.expires_at)}"
 TEXT 20,220,"0",0,1,1,"Изготовил: {label.made_by}"
-TEXT 20,250,"0",0,1,1,"Проверил: {label.checked_by}"
+TEXT 20,250,"0",0,1,1,"Цех: {label.checked_by}"
 PRINT 1
 """
     return tspl.strip()

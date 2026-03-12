@@ -771,8 +771,8 @@ class MirlisMarkApp(QWidget):
         self.made_input.setVisible(False)
         left_layout.addWidget(self.made_input)
 
-        # checked by
-        lab_chk = QLabel("Проверил")
+        # checked by (в Excel — названия цехов)
+        lab_chk = QLabel("Цех")
         lab_chk.setObjectName("FieldLabel")
         lab_chk.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         left_layout.addWidget(lab_chk)
@@ -785,7 +785,7 @@ class MirlisMarkApp(QWidget):
         left_layout.addWidget(self.checked_manual)
 
         self.checked_input = QLineEdit()
-        self.checked_input.setPlaceholderText("ФИО (можно оставить пустым)")
+        self.checked_input.setPlaceholderText("Цех (можно оставить пустым)")
         self.checked_input.setVisible(False)
         left_layout.addWidget(self.checked_input)
 
@@ -1435,7 +1435,7 @@ class MirlisMarkApp(QWidget):
             f"№ партии: {getattr(label, 'batch', '')}\n"
             f"Годен до: {format_dt(getattr(label, 'expires_at', produced_at))}\n"
             f"Изготовил: {getattr(label, 'made_by', '')}\n"
-            f"Проверил: {getattr(label, 'checked_by', '')}\n"
+            f"Цех: {getattr(label, 'checked_by', '')}\n"
         )
 
         return {
@@ -1535,7 +1535,7 @@ class MirlisMarkApp(QWidget):
                     self.toggle_made_mode()
                     self.made_input.setText(made_by)
 
-            # проверил
+            # цех
             self.checked_manual.setChecked(checked_manual)
             self.toggle_checked_mode()
             if checked_manual:
@@ -1797,7 +1797,7 @@ class MirlisMarkApp(QWidget):
             f"№ партии: {label.batch}\n"
             f"Годен до: {format_dt(label.expires_at)}\n"
             f"Изготовил: {label.made_by}\n"
-            f"Проверил: {label.checked_by}\n"
+            f"Цех: {label.checked_by}\n"
         )
         return (text, True)
 
