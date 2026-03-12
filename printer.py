@@ -70,7 +70,8 @@ def _find_windows_font() -> Optional[str]:
 # ================================
 
 def _mm_to_px(mm: float, dpi: int) -> int:
-    return int(round(mm / 25.4 * dpi))
+    # Без round: BITMAP не должен превышать SIZE (часть TSPL-принтеров иначе не печатают).
+    return int(mm / 25.4 * dpi)
 
 
 # ================================

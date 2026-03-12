@@ -226,6 +226,10 @@ class MirlisMarkApp(QWidget):
         self._last_printed_tspl_bytes: bytes | None = None
         self.last_history_entry: dict | None = None
 
+        # размер этикетки: ширина 58 мм, высота 60 или 80 мм
+        self.label_w_mm = 58.0
+        self.label_h_mm = 80.0
+
         # данные
         self.products = []
         self.staff_made = []
@@ -903,6 +907,20 @@ class MirlisMarkApp(QWidget):
         center_panel_layout.setSpacing(10)
         center_panel_layout.addWidget(self.card_right)
 
+        # выбор размера этикетки (58×80 или 58×60 мм)
+        label_size_row = QHBoxLayout()
+        label_size_row.setSpacing(8)
+        label_size_lab = QLabel("Размер этикетки")
+        label_size_lab.setObjectName("FieldLabel")
+        self.label_size_combo = ComboBoxFixedArrow()
+        self.label_size_combo.addItem("58×80 мм")
+        self.label_size_combo.addItem("58×60 мм")
+        self.label_size_combo.setCurrentIndex(0)
+        self.label_size_combo.setMinimumWidth(140)
+        label_size_row.addWidget(label_size_lab)
+        label_size_row.addWidget(self.label_size_combo, 1)
+        center_panel_layout.addLayout(label_size_row)
+
         # print row — ВНЕ белой карточки, на сером фоне
         pr = QHBoxLayout()
         pr.setSpacing(12)
@@ -1019,6 +1037,7 @@ class MirlisMarkApp(QWidget):
         self.copies_plus.clicked.connect(self.increase_copies)
         self.copies_minus.clicked.connect(self.decrease_copies)
         self.copies_input.textChanged.connect(self._sanitize_copies)
+        self.label_size_combo.currentIndexChanged.connect(self._on_label_size_changed)
 
         # editor signals: чтобы не откатывало форматирование
         self.preview.textChanged.connect(self._on_preview_text_changed)
@@ -1050,7 +1069,7 @@ class MirlisMarkApp(QWidget):
         self.preview.setFont(QFont("Segoe UI", self._base_font_size))
 
         # ВАЖНО: применяем стиль комбобоксов явно (иначе иногда теряются подстили)
-        for cb in (self.product_combo, self.unit_combo, self.made_combo, self.checked_combo, self.font_combo):
+        for cb in (self.product_combo, self.unit_combo, self.made_combo, self.checked_combo, self.font_combo, self.label_size_combo):
             cb.setObjectName("ComboWithArrow")
 
         # инициализация состояния истории
@@ -1089,14 +1108,20 @@ class MirlisMarkApp(QWidget):
         if avail_w < 50 or avail_h < 50:
             return
 
-        target_w = min(avail_w, int(avail_h * 58 / 80)) - 10
+        h_mm = getattr(self, "label_h_mm", 80)
+        target_w = min(avail_w, int(avail_h * self.label_w_mm / h_mm)) - 10
         target_w = max(350, target_w)
-        target_h = int(target_w * 80 / 58)
+        target_h = int(target_w * h_mm / self.label_w_mm)
 
         target_w = min(target_w, 520)
-        target_h = min(target_h, int(520 * 80 / 58))
+        target_h = min(target_h, int(520 * h_mm / self.label_w_mm))
 
         self.preview.setFixedSize(int(target_w), int(target_h))
+
+    def _on_label_size_changed(self, index: int):
+        """При смене размера этикетки обновляем высоту и пропорции превью."""
+        self.label_h_mm = 80.0 if index == 0 else 60.0
+        self._resize_label_preview()
 
     # ---------------- Excel / data ----------------
     def reload_excel(self, show_message: bool = True):
@@ -1976,8 +2001,8 @@ class MirlisMarkApp(QWidget):
 # ---------------- Rendering preview → TSPL bitmap ----------------
     def _render_preview_to_tspl_bytes(
         self,
-        label_w_mm: float = 58,
-        label_h_mm: float = 80,
+        label_w_mm: float | None = None,
+        label_h_mm: float | None = None,
         dpi: int = 203,
         density: int = 10,
         speed: int = 4,
@@ -1985,13 +2010,14 @@ class MirlisMarkApp(QWidget):
         copies: int = 1,
     ) -> bytes:
         """
-        WYSIWYG-рендеринг: берём QTextDocument из preview-редактора
-        в тех же координатах, в которых пользователь видит его на экране,
-        и масштабируем в пиксели принтера (203 DPI, 58×80 мм).
-        Текст переносится ровно в тех же местах, что и в предпросмотре.
+        WYSIWYG-рендеринг: берём QTextDocument из preview-редактора,
+        масштабируем в пиксели принтера (203 DPI). Размер этикетки берётся из выбора пользователя.
+        Важно: используем int() без round(), чтобы BITMAP height не превышал SIZE (TSPL).
         """
-        w_px = int(round(label_w_mm / 25.4 * dpi))
-        h_px = int(round(label_h_mm / 25.4 * dpi))
+        w_mm = label_w_mm if label_w_mm is not None else getattr(self, "label_w_mm", 58.0)
+        h_mm = label_h_mm if label_h_mm is not None else getattr(self, "label_h_mm", 80.0)
+        w_px = int(w_mm / 25.4 * dpi)
+        h_px = int(h_mm / 25.4 * dpi)
 
         # клонируем документ, чтобы не трогать редактор
         doc = self.preview.document().clone()
@@ -2037,9 +2063,16 @@ class MirlisMarkApp(QWidget):
                         byte_val |= (1 << (7 - bit))
                 raster.append(byte_val)
 
+        # GAP 2 mm — стандарт; для части рулонов 58×60 зазор 3 mm (тогда задать gap_mm = 3)
+        gap_mm = 2.0
         header = (
-            f"SIZE {label_w_mm} mm, {label_h_mm} mm\r\n"
-            f"GAP 2 mm, 0 mm\r\n"
+            f"SIZE {w_mm} mm, {h_mm} mm\r\n"
+            f"GAP {gap_mm} mm, 0 mm\r\n"
+        ).encode("ascii")
+        # Калибровка датчика зазора для 58×60: принтер ищет следующий GAP и не уходит в ошибку после первой этикетки
+        if h_mm == 60:
+            header += b"GAPDETECT\r\n"
+        header += (
             f"SPEED {speed}\r\n"
             f"DENSITY {density}\r\n"
             f"DIRECTION 1\r\n"
