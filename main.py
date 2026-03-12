@@ -611,9 +611,8 @@ class MirlisMarkApp(QWidget):
 
         # logo
         self.logo = QLabel()
-        # чуть компактнее, чтобы не выглядел растянутым
-        self.logo.setFixedSize(176, 64)
-        self.logo.setScaledContents(True)
+        self.logo.setStyleSheet("background: transparent;")
+        self.logo.setScaledContents(False)
         self._load_logo()
         top_layout.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -1061,9 +1060,16 @@ class MirlisMarkApp(QWidget):
         if os.path.exists(LOGO_PATH):
             pix = QPixmap(LOGO_PATH)
             if not pix.isNull():
-                self.logo.setPixmap(pix.scaled(self.logo.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                # масштабируем по высоте 56px (× dpr для чёткости)
+                target_h = 56
+                dpr = self.devicePixelRatio() if hasattr(self, 'devicePixelRatio') else 2.0
+                scaled = pix.scaledToHeight(
+                    int(target_h * dpr),
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                scaled.setDevicePixelRatio(dpr)
+                self.logo.setPixmap(scaled)
                 return
-        # fallback
         self.logo.setText("")
 
 
