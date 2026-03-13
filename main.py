@@ -352,6 +352,8 @@ class CustomDateTimePicker(QWidget):
         except Exception:
             pass
         inner.addWidget(self._drop_icon, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._text_label.installEventFilter(self)
+        self._drop_icon.installEventFilter(self)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -617,9 +619,13 @@ class CustomDateTimePicker(QWidget):
         self._update_btn_text()
         self.dateTimeChanged.emit()
 
-    # ---------- event filter: клик по контейнеру открывает popup ----------
+    # ---------- event filter: клик по контейнеру (или по тексту/иконке) — toggle popup ----------
     def eventFilter(self, obj, event):
-        if obj is self._trigger_frame and event.type() == QEvent.Type.MouseButtonPress:
+        if event.type() == QEvent.Type.MouseButtonPress and obj in (
+            self._trigger_frame,
+            self._text_label,
+            self._drop_icon,
+        ):
             self._toggle_popup()
             return True
         return super().eventFilter(obj, event)
