@@ -11,6 +11,7 @@ import os
 import time
 import math
 import json
+import calendar
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -33,8 +34,13 @@ from PyQt6.QtWidgets import (
     QFontComboBox,
     QSpacerItem,
     QFileDialog,
+    QDateTimeEdit,
+    QDateEdit,
+    QTimeEdit,
+    QCalendarWidget,
+    QGridLayout,
 )
-from PyQt6.QtCore import QTimer, Qt, QUrl, QSize
+from PyQt6.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent
 from PyQt6.QtGui import (
     QDesktopServices,
     QIcon,
@@ -79,6 +85,9 @@ APP_TITLE = "Mirlis Mark — Система маркировки"
 APP_MARK = "Mark"
 APP_VERSION = "1.0"
 APP_SUBTITLE = "Система маркировки"
+
+# фон предпросмотра в ручном режиме: мягкий светло-жёлтый (чуть насыщеннее бледного)
+MANUAL_PREVIEW_BG = "#fef3c7"
 
 
 # -------------------- HELPERS --------------------
@@ -140,6 +149,17 @@ class HeaderLabel(QLabel):
         super().__init__(text, parent)
         self.setObjectName("SectionTitle")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+
+class PreviewHeaderLabel(HeaderLabel):
+    """Заголовок «Предпросмотр»: двойной клик переключает ручной режим. Без hover/кнопки."""
+
+    doubleClicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
 
 
 class ComboBoxFixedArrow(QComboBox):
@@ -227,6 +247,373 @@ class SplashVideo(QWidget):
         self._player.play()
 
 
+# -------------------- CUSTOM DATE-TIME PICKER --------------------
+_MONTH_NAMES_RU = [
+    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+_MONTH_NAMES_RU_GENITIVE = [
+    "", "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+_WEEKDAY_HEADERS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+class CustomDateTimePicker(QWidget):
+    """Кастомный picker даты и времени с popup-панелью (календарь + время)."""
+
+    dateTimeChanged = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._date = QDate.currentDate()
+        self._time = QTime.currentTime()
+        self._popup_visible = False
+
+        # --- триггер как у QComboBox: контейнер с текстом слева и combo-btn.svg справа ---
+        combo_btn_path = os.path.join(BASE_DIR, "assets", "combo-btn.svg").replace("\\", "/")
+        self._trigger_frame = QFrame()
+        self._trigger_frame.setObjectName("DateTimeTrigger")
+        self._trigger_frame.setMinimumHeight(40)
+        self._trigger_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._trigger_frame.setStyleSheet(
+            "#DateTimeTrigger { background: #ffffff; border: 1px solid #cfd6e0; border-radius: 12px; }"
+            "#DateTimeTrigger:hover { border-color: #94a3b8; }"
+        )
+        self._trigger_frame.installEventFilter(self)
+        inner = QHBoxLayout(self._trigger_frame)
+        inner.setContentsMargins(14, 0, 4, 0)
+        inner.setSpacing(0)
+        self._text_label = QLabel()
+        self._text_label.setStyleSheet(
+            "background: transparent; border: none; font-size: 14px; color: #111827;"
+        )
+        self._text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        inner.addWidget(self._text_label, 1)
+        self._drop_icon = QLabel()
+        self._drop_icon.setFixedSize(36, 36)
+        self._drop_icon.setStyleSheet("background: transparent; border: none;")
+        try:
+            icon = QIcon(combo_btn_path)
+            if not icon.isNull():
+                self._drop_icon.setPixmap(icon.pixmap(QSize(36, 36)))
+        except Exception:
+            pass
+        inner.addWidget(self._drop_icon, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self._trigger_frame)
+
+        # --- popup ---
+        self._popup = QFrame(self, Qt.WindowType.Popup)
+        self._popup.setStyleSheet(
+            "QFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; }"
+        )
+        self._popup.setFixedWidth(625)  # ещё +1.25 для календарной сетки
+        self._build_popup()
+        self._update_btn_text()
+
+    # ---------- btn text ----------
+    def _update_btn_text(self):
+        d = self._date
+        month_gen = _MONTH_NAMES_RU_GENITIVE[d.month()]
+        txt = f"  📅   {d.day()} {month_gen} {d.year()}  {self._time.toString('HH:mm')}"
+        self._text_label.setText(txt)
+
+    # ---------- popup build ----------
+    def _build_popup(self):
+        popup_lay = QVBoxLayout(self._popup)
+        popup_lay.setContentsMargins(16, 10, 16, 10)
+        popup_lay.setSpacing(8)
+
+        # --- навигация месяца ---
+        nav = QHBoxLayout()
+        nav.setSpacing(0)
+        self._prev_btn = QPushButton("‹")
+        self._prev_btn.setFixedSize(36, 36)
+        self._prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._prev_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; font-size: 22px; font-weight: 700; color: #64748b; }"
+            "QPushButton:hover { color: #111827; }"
+        )
+        self._prev_btn.clicked.connect(lambda: self._change_month(-1))
+
+        self._month_label = QLabel()
+        self._month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._month_label.setStyleSheet(
+            "font-size: 16px; font-weight: 700; color: #111827; background: transparent;"
+        )
+
+        self._next_btn = QPushButton("›")
+        self._next_btn.setFixedSize(36, 36)
+        self._next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._next_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; font-size: 22px; font-weight: 700; color: #64748b; }"
+            "QPushButton:hover { color: #111827; }"
+        )
+        self._next_btn.clicked.connect(lambda: self._change_month(1))
+
+        nav.addWidget(self._prev_btn)
+        nav.addWidget(self._month_label, 1)
+        nav.addWidget(self._next_btn)
+        popup_lay.addLayout(nav)
+
+        # --- разделитель ---
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #e2e8f0; background: #e2e8f0; border: none; max-height: 1px;")
+        popup_lay.addWidget(sep)
+
+        # --- сетка дней ---
+        self._cal_grid = QGridLayout()
+        self._cal_grid.setSpacing(2)
+        for c in range(7):
+            self._cal_grid.setColumnMinimumWidth(c, 56)
+        # заголовки
+        for col, name in enumerate(_WEEKDAY_HEADERS):
+            lbl = QLabel(name)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            color = "#ef6c00" if col >= 5 else "#9ca3af"
+            lbl.setStyleSheet(
+                f"font-size: 12px; font-weight: 600; color: {color}; "
+                "background: transparent; padding: 4px 0;"
+            )
+            self._cal_grid.addWidget(lbl, 0, col)
+        popup_lay.addLayout(self._cal_grid)
+
+        # --- разделитель ---
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #e2e8f0; background: #e2e8f0; border: none; max-height: 1px;")
+        popup_lay.addWidget(sep2)
+
+        # --- блок времени ---
+        time_header = QLabel("Время")
+        time_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        time_header.setStyleSheet(
+            "font-size: 21px; font-weight: 700; color: #111827; background: transparent; padding: 2px 0;"
+        )
+        time_header_row = QHBoxLayout()
+        time_header_row.setContentsMargins(0, 0, 0, 0)
+        time_header_row.addStretch(1)
+        time_header_row.addWidget(time_header)
+        time_header_row.addStretch(1)
+        popup_lay.addLayout(time_header_row)
+
+        arrow_style = (
+            "QPushButton { background: #f9b233; border: none; border-radius: 10px; "
+            "color: #ffffff; font-size: 16px; font-weight: 800; min-width: 34px; min-height: 28px; }"
+            "QPushButton:hover { background: #e5a020; }"
+            "QPushButton:pressed { background: #cc8c10; }"
+        )
+        btn_h_up = QPushButton("▲")
+        btn_h_up.setStyleSheet(arrow_style)
+        btn_h_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_h_up.setAutoRepeat(True)
+        btn_h_up.setAutoRepeatDelay(400)
+        btn_h_up.setAutoRepeatInterval(100)
+        btn_h_up.clicked.connect(lambda: self._step_time("h", 1))
+        btn_h_down = QPushButton("▼")
+        btn_h_down.setStyleSheet(arrow_style)
+        btn_h_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_h_down.setAutoRepeat(True)
+        btn_h_down.setAutoRepeatDelay(400)
+        btn_h_down.setAutoRepeatInterval(100)
+        btn_h_down.clicked.connect(lambda: self._step_time("h", -1))
+        btn_m_up = QPushButton("▲")
+        btn_m_up.setStyleSheet(arrow_style)
+        btn_m_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_m_up.setAutoRepeat(True)
+        btn_m_up.setAutoRepeatDelay(400)
+        btn_m_up.setAutoRepeatInterval(60)
+        btn_m_up.clicked.connect(lambda: self._step_time("m", 1))
+        btn_m_down = QPushButton("▼")
+        btn_m_down.setStyleSheet(arrow_style)
+        btn_m_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_m_down.setAutoRepeat(True)
+        btn_m_down.setAutoRepeatDelay(400)
+        btn_m_down.setAutoRepeatInterval(60)
+        btn_m_down.clicked.connect(lambda: self._step_time("m", -1))
+
+        self._hour_label = QLabel()
+        self._hour_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hour_label.setMinimumSize(72, 40)
+        self._hour_label.setStyleSheet(
+            "font-size: 28px; font-weight: 700; color: #111827; "
+            "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;"
+        )
+        self._min_label = QLabel()
+        self._min_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._min_label.setMinimumSize(72, 40)
+        self._min_label.setStyleSheet(
+            "font-size: 28px; font-weight: 700; color: #111827; "
+            "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;"
+        )
+        colon = QLabel(":")
+        colon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        colon.setFixedSize(24, 40)
+        colon.setStyleSheet("font-size: 28px; font-weight: 700; color: #111827; background: transparent;")
+
+        time_grid = QGridLayout()
+        time_grid.setSpacing(4)
+        time_grid.setContentsMargins(0, 2, 0, 0)
+        time_grid.addWidget(self._hour_label, 0, 0, 1, 2, Qt.AlignmentFlag.AlignCenter)
+        time_grid.addWidget(colon, 0, 2, Qt.AlignmentFlag.AlignCenter)
+        time_grid.addWidget(self._min_label, 0, 3, 1, 2, Qt.AlignmentFlag.AlignCenter)
+        time_grid.addWidget(btn_h_up, 1, 0, Qt.AlignmentFlag.AlignHCenter)
+        time_grid.addWidget(btn_h_down, 1, 1, Qt.AlignmentFlag.AlignHCenter)
+        time_grid.addWidget(btn_m_up, 1, 3, Qt.AlignmentFlag.AlignHCenter)
+        time_grid.addWidget(btn_m_down, 1, 4, Qt.AlignmentFlag.AlignHCenter)
+        time_grid.setColumnMinimumWidth(0, 40)
+        time_grid.setColumnMinimumWidth(1, 40)
+        time_grid.setColumnMinimumWidth(2, 24)
+        time_grid.setColumnMinimumWidth(3, 40)
+        time_grid.setColumnMinimumWidth(4, 40)
+        popup_lay.addLayout(time_grid)
+
+        self._refresh_calendar()
+        self._refresh_time_labels()
+
+    # ---------- calendar grid ----------
+    def _refresh_calendar(self):
+        # удаляем старые кнопки дней (строки 1+)
+        for r in range(7, 0, -1):
+            for c in range(7):
+                item = self._cal_grid.itemAtPosition(r, c)
+                if item and item.widget():
+                    item.widget().deleteLater()
+
+        self._month_label.setText(f"{_MONTH_NAMES_RU[self._date.month()]} {self._date.year()}")
+
+        year = self._date.year()
+        month = self._date.month()
+        cal = calendar.Calendar(firstweekday=0)
+        weeks = cal.monthdayscalendar(year, month)
+
+        for row_idx, week in enumerate(weeks):
+            for col_idx, day in enumerate(week):
+                btn = QPushButton("" if day == 0 else str(day))
+                btn.setFixedSize(56, 36)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor if day else Qt.CursorShape.ArrowCursor)
+
+                if day == 0:
+                    btn.setEnabled(False)
+                    btn.setStyleSheet(
+                        "QPushButton { background: transparent; border: none; }"
+                    )
+                elif day == self._date.day():
+                    btn.setStyleSheet(
+                        "QPushButton { background: #f9b233; color: #ffffff; border: none; "
+                        "border-radius: 10px; font-size: 14px; font-weight: 700; }"
+                        "QPushButton:hover { background: #e5a020; }"
+                    )
+                elif col_idx >= 5:
+                    btn.setStyleSheet(
+                        "QPushButton { background: transparent; border: none; border-radius: 10px; "
+                        "font-size: 14px; color: #ef6c00; }"
+                        "QPushButton:hover { background: #fff3e0; }"
+                    )
+                else:
+                    btn.setStyleSheet(
+                        "QPushButton { background: transparent; border: none; border-radius: 10px; "
+                        "font-size: 14px; color: #374151; }"
+                        "QPushButton:hover { background: #f1f5f9; }"
+                    )
+
+                if day > 0:
+                    btn.clicked.connect(lambda checked, d=day: self._select_day(d))
+
+                self._cal_grid.addWidget(btn, row_idx + 1, col_idx)
+
+    def _change_month(self, delta):
+        m = self._date.month() + delta
+        y = self._date.year()
+        if m < 1:
+            m = 12
+            y -= 1
+        elif m > 12:
+            m = 1
+            y += 1
+        max_day = calendar.monthrange(y, m)[1]
+        d = min(self._date.day(), max_day)
+        self._date = QDate(y, m, d)
+        self._refresh_calendar()
+        self._update_btn_text()
+        self.dateTimeChanged.emit()
+
+    def _select_day(self, day):
+        self._date = QDate(self._date.year(), self._date.month(), day)
+        self._refresh_calendar()
+        self._update_btn_text()
+        self.dateTimeChanged.emit()
+
+    # ---------- time ----------
+    def _refresh_time_labels(self):
+        self._hour_label.setText(f"{self._time.hour():02d}")
+        self._min_label.setText(f"{self._time.minute():02d}")
+
+    def _step_time(self, part, delta):
+        h = self._time.hour()
+        m = self._time.minute()
+        if part == "h":
+            h = (h + delta) % 24
+        else:
+            m = (m + delta) % 60
+        self._time = QTime(h, m)
+        self._refresh_time_labels()
+        self._update_btn_text()
+        self.dateTimeChanged.emit()
+
+    # ---------- event filter: клик по контейнеру открывает popup ----------
+    def eventFilter(self, obj, event):
+        if obj is self._trigger_frame and event.type() == QEvent.Type.MouseButtonPress:
+            self._toggle_popup()
+            return True
+        return super().eventFilter(obj, event)
+
+    # ---------- popup toggle ----------
+    def _toggle_popup(self):
+        if self._popup.isVisible():
+            self._popup.hide()
+        else:
+            self._popup.adjustSize()
+            popup_h = self._popup.height() or self._popup.sizeHint().height() or 320
+            win = self.window()
+            win_rect = win.frameGeometry()
+            f = self._trigger_frame
+            btn_bottom_global = f.mapToGlobal(QPoint(0, f.height())).y()
+            btn_top_global = f.mapToGlobal(QPoint(0, 0)).y()
+            space_below = win_rect.bottom() - btn_bottom_global
+            margin = 8
+            popup_below_gap = 14
+
+            if space_below - margin >= popup_h:
+                pos = f.mapToGlobal(QPoint(0, f.height() + popup_below_gap))
+            else:
+                pos = f.mapToGlobal(QPoint(0, 0))
+                pos.setY(btn_top_global - popup_h - margin)
+            self._popup.move(pos)
+            self._popup.show()
+
+    # ---------- public API ----------
+    def date(self) -> QDate:
+        return self._date
+
+    def time_(self) -> QTime:
+        return self._time
+
+    def setDate(self, d: QDate):
+        self._date = d
+        self._refresh_calendar()
+        self._update_btn_text()
+
+    def setTime(self, t: QTime):
+        self._time = t
+        self._refresh_time_labels()
+        self._update_btn_text()
+
+
 # -------------------- MAIN APP --------------------
 class MirlisMarkApp(QWidget):
     def __init__(self):
@@ -258,6 +645,9 @@ class MirlisMarkApp(QWidget):
         # флаги чтобы редактор НЕ “откатывал” форматирование
         self._updating_preview = False
         self._user_edited_preview = False
+
+        # ручной режим предпросмотра: по умолчанию выключен, не сохраняется между запусками
+        self._preview_manual_mode = False
 
         # базовый размер шрифта в редакторе
         self._base_font_size = 20
@@ -807,6 +1197,19 @@ class MirlisMarkApp(QWidget):
         self.checked_input.setVisible(False)
         left_layout.addWidget(self.checked_input)
 
+        # поле "Дата и время" — только в ручном режиме предпросмотра
+        lab_dt = QLabel("Дата и время")
+        lab_dt.setObjectName("FieldLabel")
+        lab_dt.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.manual_datetime_label = lab_dt
+
+        self.manual_datetime_picker = CustomDateTimePicker()
+
+        self.manual_datetime_label.setVisible(False)
+        self.manual_datetime_picker.setVisible(False)
+        left_layout.addWidget(self.manual_datetime_label)
+        left_layout.addWidget(self.manual_datetime_picker)
+
         left_layout.addStretch(1)
 
         # оборачиваем левую карточку в контейнер для гибкой раскладки
@@ -822,8 +1225,18 @@ class MirlisMarkApp(QWidget):
         right_layout.setContentsMargins(18, 18, 18, 18)
         right_layout.setSpacing(14)
 
-        right_title = HeaderLabel("Предпросмотр")
-        right_layout.addWidget(right_title, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.preview_header = PreviewHeaderLabel("Предпросмотр")
+        right_layout.addWidget(self.preview_header, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        # подпись «редактирование» — бейдж активного режима, скрыт по умолчанию
+        self.manual_mode_subtitle = QLabel("редактирование")
+        self.manual_mode_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.manual_mode_subtitle.setStyleSheet(
+            "font-size: 12px; font-weight: 700; color: #ffffff; "
+            "background: #8b5cf6; border-radius: 8px; padding: 4px 10px; margin: 0;"
+        )
+        self.manual_mode_subtitle.setVisible(False)
+        right_layout.addWidget(self.manual_mode_subtitle, 0, Qt.AlignmentFlag.AlignHCenter)
 
         # toolbar
         tb = QHBoxLayout()
@@ -1077,6 +1490,8 @@ class MirlisMarkApp(QWidget):
         self.btn_align_justify.clicked.connect(lambda: self._set_alignment(Qt.AlignmentFlag.AlignJustify))
 
         self.font_combo.currentFontChanged.connect(self._set_font_family_on_selection)
+        self.preview_header.doubleClicked.connect(self._toggle_preview_manual_mode)
+        self.manual_datetime_picker.dateTimeChanged.connect(self.refresh_preview)
 
         # история: поиск и пагинация
         self.history_search.textChanged.connect(self._on_history_search_text_changed)
@@ -1140,6 +1555,16 @@ class MirlisMarkApp(QWidget):
         """При смене размера этикетки обновляем высоту и пропорции превью."""
         self.label_h_mm = 80.0 if index == 0 else 60.0
         self._resize_label_preview()
+
+    def _toggle_preview_manual_mode(self):
+        """Переключение ручного режима: двойной клик по заголовку «Предпросмотр»."""
+        self._preview_manual_mode = not self._preview_manual_mode
+        on = self._preview_manual_mode
+        self.manual_datetime_label.setVisible(on)
+        self.manual_datetime_picker.setVisible(on)
+        self.manual_mode_subtitle.setVisible(on)
+        self._user_edited_preview = False
+        self.refresh_preview()
 
     # ---------------- Excel / data ----------------
     def reload_excel(self, show_message: bool = True):
@@ -1798,6 +2223,12 @@ class MirlisMarkApp(QWidget):
         made_by = self._made_value()
         checked_by = self._checked_value()
 
+        produced_at = None
+        if getattr(self, "_preview_manual_mode", False):
+            d = self.manual_datetime_picker.date()
+            t = self.manual_datetime_picker.time_()
+            produced_at = datetime(d.year(), d.month(), d.day(), t.hour(), t.minute())
+
         label = build_label(
             product_name=product["name"],
             shelf_life_hours=product["shelf_life_hours"],
@@ -1805,6 +2236,7 @@ class MirlisMarkApp(QWidget):
             unit=unit_code,
             made_by=made_by,
             checked_by=checked_by,
+            produced_at=produced_at,
         )
 
         text = (
