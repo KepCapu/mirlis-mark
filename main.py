@@ -1382,6 +1382,8 @@ class MirlisMarkApp(QWidget):
             }
             """
         )
+        # по умолчанию предпросмотр только для отображения; редактирование текста — только в ручном режиме
+        self.preview.setReadOnly(True)
 
         self.preview_wrap = QFrame()
         self.preview_wrap.setObjectName("LabelWrap")
@@ -1625,6 +1627,7 @@ class MirlisMarkApp(QWidget):
         self.manual_datetime_label.setVisible(on)
         self.manual_datetime_picker.setVisible(on)
         self.manual_mode_subtitle.setVisible(on)
+        self.preview.setReadOnly(not on)
         self._user_edited_preview = False
         self.refresh_preview()
 
