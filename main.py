@@ -6,8 +6,11 @@
 # - excel_loader.py / label_logic.py / printer.py НЕ ТРОГАЕМ
 # - логотип берём по пути: D:\mirlis_mark\Mirlis software logo.png
 
+
+
 import sys
 import os
+import shutil
 import time
 import math
 import json
@@ -65,21 +68,65 @@ from printer import print_text_as_bitmap_tspl, print_raw
 import win32print
 
 
-# -------------------- CONFIG --------------------
-# PyInstaller: sys.executable указывает на exe, __file__ — на temp-папку
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# -------------------- ПУТИ: ресурсы и пользовательские данные --------------------
+def resource_path(relative_path: str) -> str:
+    """Путь к встроенному ресурсу: из исходников — от корня проекта, из exe — из sys._MEIPASS."""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, *relative_path.replace("/", os.sep).split(os.sep))
 
-EXCEL_PATH = os.path.join(BASE_DIR, "data_sources", "products.xlsx")
-CONFIG_PATH = os.path.join(BASE_DIR, "settings.json")
+
+def app_data_dir() -> str:
+    """Папка приложения в профиле пользователя Windows (%LOCALAPPDATA%\\MirlisMark). Создаётся при первом вызове."""
+    if sys.platform == "win32":
+        root = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    else:
+        root = os.path.expanduser("~")
+    path = os.path.join(root, "MirlisMark")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_config_path() -> str:
+    """Путь к settings.json в пользовательской папке приложения."""
+    return os.path.join(app_data_dir(), "settings.json")
+
+
+def ensure_products_file() -> str:
+    """
+    Путь к products.xlsx для работы приложения.
+    Файл лежит в пользовательской папке; при отсутствии копируется шаблон из ресурсов сборки.
+    При отсутствии шаблона или ошибке копирования выбрасывает RuntimeError с понятным текстом.
+    """
+    app_dir = app_data_dir()
+    target = os.path.join(app_dir, "products.xlsx")
+    if os.path.isfile(target):
+        return target
+    template = resource_path("data_sources/products.xlsx")
+    if not os.path.isfile(template):
+        raise RuntimeError(
+            "Встроенный шаблон products.xlsx не найден. "
+            "Убедитесь, что при сборке добавлена папка data_sources (--add-data \"data_sources;data_sources\")."
+        )
+    try:
+        shutil.copy2(template, target)
+    except Exception as e:
+        raise RuntimeError(
+            f"Не удалось создать файл products.xlsx в папке приложения:\n{app_dir}\nОшибка: {e}"
+        ) from e
+    return target
+
+
+# Константы листов Excel (не пути)
 SHEET_PRODUCTS = "продукт"
 SHEET_MADE = "изготовил"
 SHEET_CHECKED = "проверил"
 
-LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
-SPLASH_VIDEO_PATH = os.path.join(BASE_DIR, "assets", "loadingscreen.mp4")
+# Ресурсы интерфейса (через resource_path для работы из исходников и из exe)
+LOGO_PATH = resource_path("assets/logo.png")
+SPLASH_VIDEO_PATH = resource_path("assets/loadingscreen.mp4")
 
 APP_TITLE = "Mirlis Mark — Система маркировки"
 APP_MARK = "Mark"
@@ -92,23 +139,28 @@ MANUAL_PREVIEW_BG = "#fef3c7"
 
 # -------------------- HELPERS --------------------
 def _load_settings() -> dict:
-    """Загрузить настройки из settings.json."""
+    """Загрузить настройки из settings.json (в папке приложения пользователя)."""
     try:
-        if os.path.isfile(CONFIG_PATH):
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        path = get_config_path()
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-    except Exception:
-        pass
+    except (OSError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"[MirlisMark] Не удалось загрузить настройки: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f"[MirlisMark] Ошибка при чтении settings.json: {e}\n")
     return {}
 
 
 def _save_settings(data: dict):
-    """Сохранить настройки в settings.json."""
+    """Сохранить настройки в settings.json (в папке приложения пользователя)."""
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(get_config_path(), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except OSError as e:
+        sys.stderr.write(f"[MirlisMark] Не удалось сохранить настройки: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f"[MirlisMark] Ошибка при записи settings.json: {e}\n")
 
 
 def _fmt_dt_local(ts: float) -> str:
@@ -271,7 +323,7 @@ class CustomDateTimePicker(QWidget):
         self._popup_visible = False
 
         # --- триггер как у QComboBox: контейнер с текстом слева и combo-btn.svg справа ---
-        combo_btn_path = os.path.join(BASE_DIR, "assets", "combo-btn.svg").replace("\\", "/")
+        combo_btn_path = resource_path("assets/combo-btn.svg").replace("\\", "/")
         self._trigger_frame = QFrame()
         self._trigger_frame.setObjectName("DateTimeTrigger")
         self._trigger_frame.setMinimumHeight(40)
@@ -618,6 +670,7 @@ class CustomDateTimePicker(QWidget):
 class MirlisMarkApp(QWidget):
     def __init__(self):
         super().__init__()
+        self.setWindowIcon(QIcon(resource_path("assets/mark_app.ico")))
         self.setWindowTitle(APP_TITLE)
 
         # окно растягиваемое, но с адекватным минимумом
@@ -638,9 +691,18 @@ class MirlisMarkApp(QWidget):
         self.staff_checked = []
         self.loaded_at_str = "—"
 
-        # путь к Excel (из настроек или дефолтный)
+        # путь к Excel (из настроек или дефолтный — файл в папке приложения пользователя)
         settings = _load_settings()
-        self.excel_path = settings.get("excel_path", EXCEL_PATH)
+        try:
+            default_excel = ensure_products_file()
+        except RuntimeError as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка инициализации",
+                str(e),
+            )
+            default_excel = os.path.join(app_data_dir(), "products.xlsx")
+        self.excel_path = settings.get("excel_path", default_excel)
 
         # флаги чтобы редактор НЕ “откатывал” форматирование
         self._updating_preview = False
@@ -674,8 +736,8 @@ class MirlisMarkApp(QWidget):
 
     # ---------------- STYLE ----------------
     def _apply_global_style(self):
-        # путь к SVG-кнопке (абсолютный, для совместимости с PyInstaller)
-        combo_btn_path = os.path.join(BASE_DIR, "assets", "combo-btn.svg").replace("\\", "/")
+        # путь к SVG-кнопке (через resource_path для исходников и exe)
+        combo_btn_path = resource_path("assets/combo-btn.svg").replace("\\", "/")
 
         # Важно: Qt НЕ поддерживает align-self, image-repeat и т.п. — не используем.
         _qss = """
@@ -1691,7 +1753,7 @@ class MirlisMarkApp(QWidget):
         except Exception:
             mtime_str = "—"
 
-        default_dir = os.path.dirname(EXCEL_PATH)
+        default_dir = app_data_dir()
         current_dir = os.path.dirname(self.excel_path)
         if os.path.normpath(current_dir) != os.path.normpath(default_dir):
             short_path = current_dir

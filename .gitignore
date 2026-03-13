@@ -26,3 +26,9 @@ Thumbs.db
 
 # Cursor
 .cursor/
+
+build/
+dist/
+installer/
+*.pyc
+__pycache__/
