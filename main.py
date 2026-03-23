@@ -1,11 +1,17 @@
 # main.py
 # Mirlis Mark — Система маркировки
-# UI: “как на картинке” + редактор предпросмотра + ВИДИМЫЕ стрелочки в выпадающих списках
+# UI: "как на картинке" + редактор предпросмотра + ВИДИМЫЕ стрелочки в выпадающих списках
 #
 # ВАЖНО:
 # - excel_loader.py / label_logic.py / printer.py НЕ ТРОГАЕМ
 # - логотип берём по пути: D:\mirlis_mark\Mirlis software logo.png
-
+#
+# === PYQT5-СОВМЕСТИМАЯ ВЕРСИЯ ===
+# Изменения относительно PyQt6:
+# - Все импорты из PyQt5
+# - Enum-стиль без вложенных флагов (Qt.AlignCenter вместо Qt.AlignmentFlag.AlignCenter)
+# - QMediaPlayer / QVideoWidget из PyQt5.QtMultimedia / QtMultimediaWidgets
+# - InsertPolicy, ScrollBarPolicy и т.п. — без вложенных enum-классов
 
 
 import sys
@@ -17,7 +23,7 @@ import json
 import calendar
 from datetime import datetime
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
     QVBoxLayout,
@@ -43,8 +49,9 @@ from PyQt6.QtWidgets import (
     QCalendarWidget,
     QGridLayout,
 )
-from PyQt6.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent
-from PyQt6.QtGui import (
+from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF
+from PyQt5.QtCore import QStringListModel
+from PyQt5.QtGui import (
     QDesktopServices,
     QIcon,
     QPixmap,
@@ -57,10 +64,10 @@ from PyQt6.QtGui import (
     QPainter,
     QColor,
 )
-from PyQt6.QtCore import QSizeF
-from PyQt6.QtCore import QStringListModel
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
+
+# PyQt5: мультимедиа
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+from PyQt5.QtMultimediaWidgets import QVideoWidget
 
 from excel_loader import load_products, load_staff
 from label_logic import build_label, format_dt
@@ -181,17 +188,17 @@ class Card(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("Card")
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
 
 class Pill(QLabel):
-    """Плашка-‘pill’ (серый бэйдж)."""
+    """Плашка-'pill' (серый бэйдж)."""
 
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self.setObjectName("Pill")
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 
 
 class HeaderLabel(QLabel):
@@ -200,7 +207,7 @@ class HeaderLabel(QLabel):
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self.setObjectName("SectionTitle")
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAlignment(Qt.AlignCenter)
 
 
 class PreviewHeaderLabel(HeaderLabel):
@@ -209,16 +216,14 @@ class PreviewHeaderLabel(HeaderLabel):
     doubleClicked = pyqtSignal()
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.LeftButton:
             self.doubleClicked.emit()
         super().mouseDoubleClickEvent(event)
 
 
 class ComboBoxFixedArrow(QComboBox):
     """
-    Комбобокс с гарантированно видимой стрелкой:
-    - оставляем drop-down зону
-    - НЕ убираем down-arrow через QSS
+    Комбобокс с гарантированно видимой стрелкой.
     """
 
     def __init__(self, parent=None):
@@ -229,7 +234,6 @@ class ComboBoxFixedArrow(QComboBox):
 class ComboBoxPopupDown(ComboBoxFixedArrow):
     """
     Комбобокс, у которого выпадающий список всегда раскрывается вниз.
-    Используется для поля «Цех», т.к. оно внизу левой панели и по умолчанию popup открывается вверх.
     """
 
     def showPopup(self):
@@ -245,7 +249,7 @@ class ToolBtn(QToolButton):
     def __init__(self, text="", parent=None):
         super().__init__(parent)
         self.setText(text)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setCursor(Qt.PointingHandCursor)
         self.setObjectName("ToolBtn")
         self.setCheckable(True)
         self.setAutoRaise(False)
@@ -254,7 +258,7 @@ class ToolBtn(QToolButton):
 class ActionBtn(QPushButton):
     def __init__(self, text="", kind="default", parent=None):
         super().__init__(text, parent)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setCursor(Qt.PointingHandCursor)
         self.setObjectName(f"Btn_{kind}")
 
 
@@ -265,9 +269,10 @@ class SplashVideo(QWidget):
     def __init__(self, video_path: str, on_finished_callback=None, parent=None):
         super().__init__(parent)
         self._on_finished = on_finished_callback
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self._finished_called = False
+        self.setWindowFlags(Qt.FramelessWindowHint)
         self.setStyleSheet("background-color: #000000;")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -275,21 +280,40 @@ class SplashVideo(QWidget):
 
         self._video_widget = QVideoWidget()
         self._video_widget.setStyleSheet("background-color: #000000;")
-        self._video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+        self._video_widget.setAspectRatioMode(Qt.KeepAspectRatioByExpanding)
         layout.addWidget(self._video_widget)
 
         self._player = QMediaPlayer()
-        self._audio_output = QAudioOutput()
-        self._player.setAudioOutput(self._audio_output)
         self._player.setVideoOutput(self._video_widget)
-        self._player.setSource(QUrl.fromLocalFile(video_path))
+        self._player.setMedia(QMediaContent(QUrl.fromLocalFile(video_path)))
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
+        self._player.error.connect(self._on_error)
+
+        # Таймаут-подстраховка: если видео не завершилось за 15 сек — запускаем приложение
+        self._timeout = QTimer(self)
+        self._timeout.setSingleShot(True)
+        self._timeout.timeout.connect(self._finish)
+        self._timeout.start(15000)
+
+    def _finish(self):
+        """Единоразовый запуск основного окна + закрытие splash."""
+        if self._finished_called:
+            return
+        self._finished_called = True
+        self._timeout.stop()
+        self._player.stop()
+        if callable(self._on_finished):
+            self._on_finished()
+        self.close()
 
     def _on_media_status_changed(self, status):
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
-            if callable(self._on_finished):
-                self._on_finished()
-            self.close()
+        if status == QMediaPlayer.EndOfMedia:
+            self._finish()
+        elif status == QMediaPlayer.InvalidMedia:
+            self._finish()
+
+    def _on_error(self):
+        self._finish()
 
     def play(self):
         self._player.play()
@@ -322,12 +346,12 @@ class CustomDateTimePicker(QWidget):
         self._time = QTime.currentTime()
         self._popup_visible = False
 
-        # --- триггер как у QComboBox: контейнер с текстом слева и combo-btn.svg справа ---
+        # --- триггер как у QComboBox ---
         combo_btn_path = resource_path("assets/combo-btn.svg").replace("\\", "/")
         self._trigger_frame = QFrame()
         self._trigger_frame.setObjectName("DateTimeTrigger")
         self._trigger_frame.setMinimumHeight(40)
-        self._trigger_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._trigger_frame.setCursor(Qt.PointingHandCursor)
         self._trigger_frame.setStyleSheet(
             "#DateTimeTrigger { background: #ffffff; border: 1px solid #cfd6e0; border-radius: 12px; }"
             "#DateTimeTrigger:hover { border-color: #94a3b8; }"
@@ -340,7 +364,7 @@ class CustomDateTimePicker(QWidget):
         self._text_label.setStyleSheet(
             "background: transparent; border: none; font-size: 14px; color: #111827;"
         )
-        self._text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._text_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         inner.addWidget(self._text_label, 1)
         self._drop_icon = QLabel()
         self._drop_icon.setFixedSize(36, 36)
@@ -351,7 +375,7 @@ class CustomDateTimePicker(QWidget):
                 self._drop_icon.setPixmap(icon.pixmap(QSize(36, 36)))
         except Exception:
             pass
-        inner.addWidget(self._drop_icon, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        inner.addWidget(self._drop_icon, 0, Qt.AlignRight | Qt.AlignVCenter)
         self._text_label.installEventFilter(self)
         self._drop_icon.installEventFilter(self)
 
@@ -360,11 +384,11 @@ class CustomDateTimePicker(QWidget):
         lay.addWidget(self._trigger_frame)
 
         # --- popup ---
-        self._popup = QFrame(self, Qt.WindowType.Popup)
+        self._popup = QFrame(self, Qt.Popup)
         self._popup.setStyleSheet(
             "QFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; }"
         )
-        self._popup.setFixedWidth(625)  # ещё +1.25 для календарной сетки
+        self._popup.setFixedWidth(625)
         self._build_popup()
         self._update_btn_text()
 
@@ -386,7 +410,7 @@ class CustomDateTimePicker(QWidget):
         nav.setSpacing(0)
         self._prev_btn = QPushButton("‹")
         self._prev_btn.setFixedSize(36, 36)
-        self._prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._prev_btn.setCursor(Qt.PointingHandCursor)
         self._prev_btn.setStyleSheet(
             "QPushButton { background: transparent; border: none; font-size: 22px; font-weight: 700; color: #64748b; }"
             "QPushButton:hover { color: #111827; }"
@@ -394,14 +418,14 @@ class CustomDateTimePicker(QWidget):
         self._prev_btn.clicked.connect(lambda: self._change_month(-1))
 
         self._month_label = QLabel()
-        self._month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._month_label.setAlignment(Qt.AlignCenter)
         self._month_label.setStyleSheet(
             "font-size: 16px; font-weight: 700; color: #111827; background: transparent;"
         )
 
         self._next_btn = QPushButton("›")
         self._next_btn.setFixedSize(36, 36)
-        self._next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._next_btn.setCursor(Qt.PointingHandCursor)
         self._next_btn.setStyleSheet(
             "QPushButton { background: transparent; border: none; font-size: 22px; font-weight: 700; color: #64748b; }"
             "QPushButton:hover { color: #111827; }"
@@ -415,7 +439,7 @@ class CustomDateTimePicker(QWidget):
 
         # --- разделитель ---
         sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("color: #e2e8f0; background: #e2e8f0; border: none; max-height: 1px;")
         popup_lay.addWidget(sep)
 
@@ -427,7 +451,7 @@ class CustomDateTimePicker(QWidget):
         # заголовки
         for col, name in enumerate(_WEEKDAY_HEADERS):
             lbl = QLabel(name)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setAlignment(Qt.AlignCenter)
             color = "#ef6c00" if col >= 5 else "#9ca3af"
             lbl.setStyleSheet(
                 f"font-size: 12px; font-weight: 600; color: {color}; "
@@ -438,13 +462,13 @@ class CustomDateTimePicker(QWidget):
 
         # --- разделитель ---
         sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setFrameShape(QFrame.HLine)
         sep2.setStyleSheet("color: #e2e8f0; background: #e2e8f0; border: none; max-height: 1px;")
         popup_lay.addWidget(sep2)
 
         # --- блок времени ---
         time_header = QLabel("Время")
-        time_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        time_header.setAlignment(Qt.AlignCenter)
         time_header.setStyleSheet(
             "font-size: 21px; font-weight: 700; color: #111827; background: transparent; padding: 2px 0;"
         )
@@ -463,62 +487,62 @@ class CustomDateTimePicker(QWidget):
         )
         btn_h_up = QPushButton("▲")
         btn_h_up.setStyleSheet(arrow_style)
-        btn_h_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_h_up.setCursor(Qt.PointingHandCursor)
         btn_h_up.setAutoRepeat(True)
         btn_h_up.setAutoRepeatDelay(400)
         btn_h_up.setAutoRepeatInterval(100)
         btn_h_up.clicked.connect(lambda: self._step_time("h", 1))
         btn_h_down = QPushButton("▼")
         btn_h_down.setStyleSheet(arrow_style)
-        btn_h_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_h_down.setCursor(Qt.PointingHandCursor)
         btn_h_down.setAutoRepeat(True)
         btn_h_down.setAutoRepeatDelay(400)
         btn_h_down.setAutoRepeatInterval(100)
         btn_h_down.clicked.connect(lambda: self._step_time("h", -1))
         btn_m_up = QPushButton("▲")
         btn_m_up.setStyleSheet(arrow_style)
-        btn_m_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_m_up.setCursor(Qt.PointingHandCursor)
         btn_m_up.setAutoRepeat(True)
         btn_m_up.setAutoRepeatDelay(400)
         btn_m_up.setAutoRepeatInterval(60)
         btn_m_up.clicked.connect(lambda: self._step_time("m", 1))
         btn_m_down = QPushButton("▼")
         btn_m_down.setStyleSheet(arrow_style)
-        btn_m_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_m_down.setCursor(Qt.PointingHandCursor)
         btn_m_down.setAutoRepeat(True)
         btn_m_down.setAutoRepeatDelay(400)
         btn_m_down.setAutoRepeatInterval(60)
         btn_m_down.clicked.connect(lambda: self._step_time("m", -1))
 
         self._hour_label = QLabel()
-        self._hour_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hour_label.setAlignment(Qt.AlignCenter)
         self._hour_label.setMinimumSize(72, 40)
         self._hour_label.setStyleSheet(
             "font-size: 28px; font-weight: 700; color: #111827; "
             "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;"
         )
         self._min_label = QLabel()
-        self._min_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._min_label.setAlignment(Qt.AlignCenter)
         self._min_label.setMinimumSize(72, 40)
         self._min_label.setStyleSheet(
             "font-size: 28px; font-weight: 700; color: #111827; "
             "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;"
         )
         colon = QLabel(":")
-        colon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        colon.setAlignment(Qt.AlignCenter)
         colon.setFixedSize(24, 40)
         colon.setStyleSheet("font-size: 28px; font-weight: 700; color: #111827; background: transparent;")
 
         time_grid = QGridLayout()
         time_grid.setSpacing(4)
         time_grid.setContentsMargins(0, 2, 0, 0)
-        time_grid.addWidget(self._hour_label, 0, 0, 1, 2, Qt.AlignmentFlag.AlignCenter)
-        time_grid.addWidget(colon, 0, 2, Qt.AlignmentFlag.AlignCenter)
-        time_grid.addWidget(self._min_label, 0, 3, 1, 2, Qt.AlignmentFlag.AlignCenter)
-        time_grid.addWidget(btn_h_up, 1, 0, Qt.AlignmentFlag.AlignHCenter)
-        time_grid.addWidget(btn_h_down, 1, 1, Qt.AlignmentFlag.AlignHCenter)
-        time_grid.addWidget(btn_m_up, 1, 3, Qt.AlignmentFlag.AlignHCenter)
-        time_grid.addWidget(btn_m_down, 1, 4, Qt.AlignmentFlag.AlignHCenter)
+        time_grid.addWidget(self._hour_label, 0, 0, 1, 2, Qt.AlignCenter)
+        time_grid.addWidget(colon, 0, 2, Qt.AlignCenter)
+        time_grid.addWidget(self._min_label, 0, 3, 1, 2, Qt.AlignCenter)
+        time_grid.addWidget(btn_h_up, 1, 0, Qt.AlignHCenter)
+        time_grid.addWidget(btn_h_down, 1, 1, Qt.AlignHCenter)
+        time_grid.addWidget(btn_m_up, 1, 3, Qt.AlignHCenter)
+        time_grid.addWidget(btn_m_down, 1, 4, Qt.AlignHCenter)
         time_grid.setColumnMinimumWidth(0, 40)
         time_grid.setColumnMinimumWidth(1, 40)
         time_grid.setColumnMinimumWidth(2, 24)
@@ -531,7 +555,6 @@ class CustomDateTimePicker(QWidget):
 
     # ---------- calendar grid ----------
     def _refresh_calendar(self):
-        # удаляем старые кнопки дней (строки 1+)
         for r in range(7, 0, -1):
             for c in range(7):
                 item = self._cal_grid.itemAtPosition(r, c)
@@ -549,7 +572,7 @@ class CustomDateTimePicker(QWidget):
             for col_idx, day in enumerate(week):
                 btn = QPushButton("" if day == 0 else str(day))
                 btn.setFixedSize(56, 36)
-                btn.setCursor(Qt.CursorShape.PointingHandCursor if day else Qt.CursorShape.ArrowCursor)
+                btn.setCursor(Qt.PointingHandCursor if day else Qt.ArrowCursor)
 
                 if day == 0:
                     btn.setEnabled(False)
@@ -619,9 +642,9 @@ class CustomDateTimePicker(QWidget):
         self._update_btn_text()
         self.dateTimeChanged.emit()
 
-    # ---------- event filter: клик по контейнеру (или по тексту/иконке) — toggle popup ----------
+    # ---------- event filter ----------
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.MouseButtonPress and obj in (
+        if event.type() == QEvent.MouseButtonPress and obj in (
             self._trigger_frame,
             self._text_label,
             self._drop_icon,
@@ -679,25 +702,20 @@ class MirlisMarkApp(QWidget):
         self.setWindowIcon(QIcon(resource_path("assets/mark_app.ico")))
         self.setWindowTitle(APP_TITLE)
 
-        # окно растягиваемое, но с адекватным минимумом
         self.setMinimumSize(1100, 650)
 
-        # печать (последний напечатанный текст для «Повторить»)
-        self.last_printed_preview_text: str | None = None
-        self._last_printed_tspl_bytes: bytes | None = None
-        self.last_history_entry: dict | None = None
+        self.last_printed_preview_text = None
+        self._last_printed_tspl_bytes = None
+        self.last_history_entry = None
 
-        # размер этикетки: ширина 58 мм, высота 60 или 80 мм
         self.label_w_mm = 58.0
         self.label_h_mm = 80.0
 
-        # данные
         self.products = []
         self.staff_made = []
         self.staff_checked = []
         self.loaded_at_str = "—"
 
-        # путь к Excel (из настроек или дефолтный — файл в папке приложения пользователя)
         settings = _load_settings()
         try:
             default_excel = ensure_products_file()
@@ -710,21 +728,15 @@ class MirlisMarkApp(QWidget):
             default_excel = os.path.join(app_data_dir(), "products.xlsx")
         self.excel_path = settings.get("excel_path", default_excel)
 
-        # флаги чтобы редактор НЕ “откатывал” форматирование
         self._updating_preview = False
         self._user_edited_preview = False
-
-        # ручной режим предпросмотра: по умолчанию выключен, не сохраняется между запусками
         self._preview_manual_mode = False
-
-        # базовый размер шрифта в редакторе
         self._base_font_size = 20
 
-        # состояние истории (должно существовать до init_ui / _rebuild_history_view)
-        self.history_entries: list[dict] = []
-        self._history_filter_text: str = ""
-        self.history_page: int = 0
-        self.history_page_size: int = 6
+        self.history_entries = []
+        self._history_filter_text = ""
+        self.history_page = 0
+        self.history_page_size = 6
         self._loading_from_history = False
         self._selected_history_id = None
 
@@ -732,8 +744,6 @@ class MirlisMarkApp(QWidget):
         self.init_ui()
         self.reload_excel(show_message=False)
 
-        # обновляем превью по таймеру (для “тикания” времени),
-        # НО НЕ переписываем редактор, если пользователь редактировал.
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_preview)
         self.timer.start(5000)
@@ -742,10 +752,8 @@ class MirlisMarkApp(QWidget):
 
     # ---------------- STYLE ----------------
     def _apply_global_style(self):
-        # путь к SVG-кнопке (через resource_path для исходников и exe)
         combo_btn_path = resource_path("assets/combo-btn.svg").replace("\\", "/")
 
-        # Важно: Qt НЕ поддерживает align-self, image-repeat и т.п. — не используем.
         _qss = """
             QWidget {
                 background: #f6f7f9;
@@ -753,21 +761,18 @@ class MirlisMarkApp(QWidget):
                 color: #111827;
             }
 
-            /* верхний белый хедер-кард */
             #TopBar {
                 background: #ffffff;
                 border: 1px solid #e5e7eb;
                 border-radius: 18px;
             }
 
-            /* карточки */
             #Card {
                 background: #ffffff;
                 border: 1px solid #e5e7eb;
                 border-radius: 18px;
             }
 
-            /* история */
             #HistoryPanel {
                 background: transparent;
             }
@@ -797,7 +802,6 @@ class MirlisMarkApp(QWidget):
                 background: transparent;
             }
 
-            /* заголовок секций — “короткая” плашка */
             #SectionTitle {
                 background: #eef2f6;
                 border-radius: 14px;
@@ -807,7 +811,6 @@ class MirlisMarkApp(QWidget):
                 letter-spacing: 0.2px;
             }
 
-            /* серые подплашки-поля (только для нужных заголовков) */
             #FieldLabel {
                 background: #eef2f6;
                 border-radius: 14px;
@@ -826,7 +829,6 @@ class MirlisMarkApp(QWidget):
                 color: #111827;
             }
 
-            /* отдельная широкая плашка статуса Excel в TopBar */
             #ExcelPill {
                 background: #eef2f6;
                 border-radius: 18px;
@@ -836,7 +838,6 @@ class MirlisMarkApp(QWidget):
                 color: #0f172a;
             }
 
-            /* инпуты */
             QLineEdit, QTextEdit {
                 background: #ffffff;
                 border: 1px solid #cfd6e0;
@@ -849,7 +850,6 @@ class MirlisMarkApp(QWidget):
                 border: 1px solid #6ea8fe;
             }
 
-            /* чекбокс */
             QCheckBox {
                 font-size: 14px;
                 background: transparent;
@@ -864,7 +864,6 @@ class MirlisMarkApp(QWidget):
                 height: 18px;
             }
 
-            /* кнопки (общая база) */
             QPushButton {
                 border-radius: 16px;
                 padding: 10px 18px;
@@ -887,7 +886,6 @@ class MirlisMarkApp(QWidget):
                 border-color: #e5e7eb;
             }
 
-            /* плоские кнопки степперов (+ / -) */
             #StepperBtn {
                 background: #f9fafb;
                 border-radius: 12px;
@@ -902,7 +900,6 @@ class MirlisMarkApp(QWidget):
                 background: #d1d5db;
             }
 
-            /* основная зелёная кнопка (ПЕЧАТЬ) */
             #Btn_primary {
                 background: #16a34a;
                 border: 1px solid #15803d;
@@ -927,7 +924,6 @@ class MirlisMarkApp(QWidget):
                 color: rgba(255,255,255,0.8);
             }
 
-            /* вторичные кнопки (Повторить, Количество и т.п.) */
             #Btn_secondary {
                 background: #f9fafb;
                 border: 1px solid #d1d5db;
@@ -951,7 +947,6 @@ class MirlisMarkApp(QWidget):
                 border-color: #e5e7eb;
             }
 
-            /* опасные действия (Очистить) */
             #Btn_danger {
                 border: 1px solid #ef4444;
                 color: #b91c1c;
@@ -972,7 +967,6 @@ class MirlisMarkApp(QWidget):
                 border-color: #fecaca;
             }
 
-            /* тулбар редактора */
             #ToolBtn {
                 border: 1px solid #d0d7e2;
                 border-radius: 14px;
@@ -990,7 +984,6 @@ class MirlisMarkApp(QWidget):
                 border-color: #4f46e5;
             }
 
-            /* выпадающие списки: светлое поле + аккуратная кнопка-стрелка справа */
             QComboBox,
             QFontComboBox {
                 min-height: 40px;
@@ -1012,7 +1005,6 @@ class MirlisMarkApp(QWidget):
                 border: 1px solid #94a3b8;
             }
 
-            /* правая зона — SVG-кнопка как фон drop-down */
             QComboBox::drop-down,
             QFontComboBox::drop-down {
                 subcontrol-origin: border;
@@ -1024,7 +1016,6 @@ class MirlisMarkApp(QWidget):
                 image: url(assets/combo-btn.svg);
             }
 
-            /* down-arrow полностью убран — визуал целиком через drop-down */
             QComboBox::down-arrow,
             QFontComboBox::down-arrow {
                 image: none;
@@ -1039,7 +1030,6 @@ class MirlisMarkApp(QWidget):
                 height: 0px;
             }
 
-            /* выпадающий список: светлый фон, скругления, мягкий hover/selection */
             QComboBox QAbstractItemView,
             QFontComboBox QAbstractItemView {
                 background: #ffffff;
@@ -1086,14 +1076,12 @@ class MirlisMarkApp(QWidget):
         top_layout.setContentsMargins(18, 14, 18, 14)
         top_layout.setSpacing(14)
 
-        # logo
         self.logo = QLabel()
         self.logo.setStyleSheet("background: transparent;")
         self.logo.setScaledContents(False)
         self._load_logo()
-        top_layout.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addWidget(self.logo, 0, Qt.AlignVCenter)
 
-        # app title block
         title_block = QVBoxLayout()
         title_block.setSpacing(2)
         title_row = QHBoxLayout()
@@ -1108,7 +1096,7 @@ class MirlisMarkApp(QWidget):
         title_row.addWidget(self.title_mark)
 
         self.badge_ver = Pill(APP_VERSION)
-        title_row.addWidget(self.badge_ver, 0, Qt.AlignmentFlag.AlignVCenter)
+        title_row.addWidget(self.badge_ver, 0, Qt.AlignVCenter)
 
         title_row.addStretch(1)
         title_block.addLayout(title_row)
@@ -1119,35 +1107,33 @@ class MirlisMarkApp(QWidget):
 
         top_layout.addLayout(title_block, 0)
 
-        # excel status pill (фиксируем ширину, чтобы при full-screen не расползалась)
         self.excel_pill = QLabel("Excel: —")
         self.excel_pill.setObjectName("ExcelPill")
-        self.excel_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.excel_pill.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.excel_pill.setAlignment(Qt.AlignCenter)
+        self.excel_pill.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.excel_pill.setMinimumWidth(360)
         self.excel_pill.setMaximumWidth(520)
         self.excel_pill.setMinimumHeight(48)
 
-        # центрируем плашку за счёт “растяжек” слева/справа
         top_layout.addStretch(1)
-        top_layout.addWidget(self.excel_pill, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addWidget(self.excel_pill, 0, Qt.AlignVCenter)
         top_layout.addStretch(1)
 
         self.reload_btn = ActionBtn("Обновить", kind="default")
         self.reload_btn.clicked.connect(self.reload_excel)
-        top_layout.addWidget(self.reload_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addWidget(self.reload_btn, 0, Qt.AlignVCenter)
 
         self.open_folder_btn = ActionBtn("Папка", kind="default")
         self.open_folder_btn.clicked.connect(self.open_excel_folder)
-        top_layout.addWidget(self.open_folder_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addWidget(self.open_folder_btn, 0, Qt.AlignVCenter)
 
         self.choose_path_btn = ActionBtn("Выбрать путь", kind="default")
         self.choose_path_btn.clicked.connect(self.choose_excel_path)
-        top_layout.addWidget(self.choose_path_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addWidget(self.choose_path_btn, 0, Qt.AlignVCenter)
 
         self.clear_btn = ActionBtn("Очистить", kind="danger")
         self.clear_btn.clicked.connect(self.clear_fields)
-        top_layout.addWidget(self.clear_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addWidget(self.clear_btn, 0, Qt.AlignVCenter)
 
         root.addWidget(top)
 
@@ -1162,37 +1148,34 @@ class MirlisMarkApp(QWidget):
         left_layout.setSpacing(14)
 
         left_title = HeaderLabel("Ввод")
-        left_layout.addWidget(left_title, 0, Qt.AlignmentFlag.AlignHCenter)
+        left_layout.addWidget(left_title, 0, Qt.AlignHCenter)
 
-        # product label
         lab_prod = QLabel("Продукт")
         lab_prod.setObjectName("FieldLabel")
-        lab_prod.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        lab_prod.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         left_layout.addWidget(lab_prod)
 
         self.product_combo = ComboBoxFixedArrow()
         self.product_combo.setEditable(True)
-        self.product_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.product_combo.setInsertPolicy(QComboBox.NoInsert)
         self.product_combo.setPlaceholderText("Введите продукт или выберите из списка")
         self.product_combo.setMaxVisibleItems(8)
         left_layout.addWidget(self.product_combo)
 
-        # completer for product
         self.product_model = QStringListModel([])
         self.product_completer = QCompleter(self.product_model, self)
-        self.product_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.product_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self.product_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.product_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.product_completer.setFilterMode(Qt.MatchContains)
+        self.product_completer.setCompletionMode(QCompleter.PopupCompletion)
         self.product_combo.setCompleter(self.product_completer)
 
-        # units + qty row
         grid = QHBoxLayout()
         grid.setSpacing(12)
 
         col_units = QVBoxLayout()
         lab_units = QLabel("Ед. изм.")
         lab_units.setObjectName("FieldLabel")
-        lab_units.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        lab_units.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         col_units.addWidget(lab_units)
 
         self.unit_combo = ComboBoxFixedArrow()
@@ -1227,10 +1210,9 @@ class MirlisMarkApp(QWidget):
         grid.addLayout(col_qty, 2)
         left_layout.addLayout(grid)
 
-        # made by
         lab_made = QLabel("Изготовил")
         lab_made.setObjectName("FieldLabel")
-        lab_made.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        lab_made.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         left_layout.addWidget(lab_made)
 
         self.made_combo = ComboBoxFixedArrow()
@@ -1246,10 +1228,9 @@ class MirlisMarkApp(QWidget):
         self.made_input.setVisible(False)
         left_layout.addWidget(self.made_input)
 
-        # checked by (в Excel — названия цехов)
         lab_chk = QLabel("Цех")
         lab_chk.setObjectName("FieldLabel")
-        lab_chk.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        lab_chk.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         left_layout.addWidget(lab_chk)
 
         self.checked_combo = ComboBoxPopupDown()
@@ -1265,10 +1246,9 @@ class MirlisMarkApp(QWidget):
         self.checked_input.setVisible(False)
         left_layout.addWidget(self.checked_input)
 
-        # поле "Дата и время" — только в ручном режиме предпросмотра
         lab_dt = QLabel("Дата и время")
         lab_dt.setObjectName("FieldLabel")
-        lab_dt.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        lab_dt.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.manual_datetime_label = lab_dt
 
         self.manual_datetime_picker = CustomDateTimePicker()
@@ -1280,7 +1260,6 @@ class MirlisMarkApp(QWidget):
 
         left_layout.addStretch(1)
 
-        # оборачиваем левую карточку в контейнер для гибкой раскладки
         left_panel = QWidget()
         left_panel_layout = QVBoxLayout(left_panel)
         left_panel_layout.setContentsMargins(0, 0, 0, 0)
@@ -1294,17 +1273,16 @@ class MirlisMarkApp(QWidget):
         right_layout.setSpacing(14)
 
         self.preview_header = PreviewHeaderLabel("Предпросмотр")
-        right_layout.addWidget(self.preview_header, 0, Qt.AlignmentFlag.AlignHCenter)
+        right_layout.addWidget(self.preview_header, 0, Qt.AlignHCenter)
 
-        # подпись «редактирование» — бейдж активного режима, скрыт по умолчанию
         self.manual_mode_subtitle = QLabel("редактирование")
-        self.manual_mode_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.manual_mode_subtitle.setAlignment(Qt.AlignCenter)
         self.manual_mode_subtitle.setStyleSheet(
             "font-size: 12px; font-weight: 700; color: #ffffff; "
             "background: #8b5cf6; border-radius: 8px; padding: 4px 10px; margin: 0;"
         )
         self.manual_mode_subtitle.setVisible(False)
-        right_layout.addWidget(self.manual_mode_subtitle, 0, Qt.AlignmentFlag.AlignHCenter)
+        right_layout.addWidget(self.manual_mode_subtitle, 0, Qt.AlignHCenter)
 
         # toolbar
         tb = QHBoxLayout()
@@ -1315,22 +1293,20 @@ class MirlisMarkApp(QWidget):
         self.btn_font_plus = ActionBtn("A+", kind="default")
         self.btn_font_plus.setFixedWidth(60)
 
-        # выпадающий список размеров шрифта (как в Word)
         self.font_size_combo = ComboBoxFixedArrow()
         self.font_size_combo.setEditable(True)
         self.font_size_combo.setFixedWidth(90)
         self.font_size_combo.addItems([str(s) for s in [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]])
         self.font_size_combo.setCurrentText(str(self._base_font_size))
 
-        # как в русском Word: Ж / К / Ч
         self.btn_bold = ToolBtn("Ж")
-        self.btn_bold.setFont(QFont("Segoe UI", 11, QFont.Weight.Black))
+        self.btn_bold.setFont(QFont("Segoe UI", 11, QFont.Black))
         self.btn_italic = ToolBtn("К")
-        f_it = QFont("Segoe UI", 11, QFont.Weight.Black)
+        f_it = QFont("Segoe UI", 11, QFont.Black)
         f_it.setItalic(True)
         self.btn_italic.setFont(f_it)
         self.btn_underline = ToolBtn("Ч")
-        f_un = QFont("Segoe UI", 11, QFont.Weight.Black)
+        f_un = QFont("Segoe UI", 11, QFont.Black)
         f_un.setUnderline(True)
         self.btn_underline.setFont(f_un)
 
@@ -1339,7 +1315,6 @@ class MirlisMarkApp(QWidget):
         self.btn_align_right = ToolBtn("≡")
         self.btn_align_justify = ToolBtn("≡")
 
-        # чтобы визуально отличались (как “иконки”)
         self.btn_align_left.setStyleSheet("#ToolBtn { font-weight: 900; }")
         self.btn_align_center.setStyleSheet("#ToolBtn { font-weight: 900; }")
         self.btn_align_right.setStyleSheet("#ToolBtn { font-weight: 900; }")
@@ -1370,14 +1345,11 @@ class MirlisMarkApp(QWidget):
         self.preview = QTextEdit()
         self.preview.setObjectName("PreviewEditor")
         self.preview.setAcceptRichText(True)
-        self.preview.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.preview.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.preview.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.preview.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        # Редактор предпросмотра: фиксированный “лист этикетки” 80×60 (высота больше ширины)
-        # Масштаб в пикселях, пропорция 80/60 = 4/3.
-        self.preview.setFixedSize(450, 600)  # initial, будет подгоняться по окну
+        self.preview.setFixedSize(450, 600)
 
-        # стиль редактора (рамка как у этикетки)
         self.preview.setStyleSheet(
             """
             QTextEdit {
@@ -1388,7 +1360,6 @@ class MirlisMarkApp(QWidget):
             }
             """
         )
-        # по умолчанию предпросмотр только для отображения; редактирование текста — только в ручном режиме
         self.preview.setReadOnly(True)
 
         self.preview_wrap = QFrame()
@@ -1396,19 +1367,17 @@ class MirlisMarkApp(QWidget):
         wrap_lay = QHBoxLayout(self.preview_wrap)
         wrap_lay.setContentsMargins(12, 12, 12, 12)
         wrap_lay.addStretch(1)
-        wrap_lay.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        wrap_lay.addWidget(self.preview, 0, Qt.AlignHCenter | Qt.AlignVCenter)
         wrap_lay.addStretch(1)
 
         right_layout.addWidget(self.preview_wrap, 1)
 
-        # оборачиваем правую карточку предпросмотра в отдельный контейнер (центр)
         center_panel = QWidget()
         center_panel_layout = QVBoxLayout(center_panel)
         center_panel_layout.setContentsMargins(0, 0, 0, 0)
         center_panel_layout.setSpacing(10)
         center_panel_layout.addWidget(self.card_right)
 
-        # выбор размера этикетки (58×80 или 58×60 мм)
         label_size_row = QHBoxLayout()
         label_size_row.setSpacing(8)
         label_size_lab = QLabel("Размер этикетки")
@@ -1422,11 +1391,10 @@ class MirlisMarkApp(QWidget):
         label_size_row.addWidget(self.label_size_combo, 1)
         center_panel_layout.addLayout(label_size_row)
 
-        # print row — ВНЕ белой карточки, на сером фоне
+        # print row
         pr = QHBoxLayout()
         pr.setSpacing(12)
 
-        # 3 одинаковых блока: Печать / Повторить / Количество (кол-во копий)
         self.print_btn = ActionBtn("ПЕЧАТЬ", kind="primary")
         self.repeat_btn = ActionBtn("Повторить", kind="secondary")
         self.repeat_btn.setEnabled(False)
@@ -1439,7 +1407,7 @@ class MirlisMarkApp(QWidget):
         self.copies_minus.setAutoRepeatInterval(80)
         self.copies_input = QLineEdit("1")
         self.copies_input.setFixedWidth(60)
-        self.copies_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.copies_input.setAlignment(Qt.AlignCenter)
         self.copies_plus = ActionBtn("+", kind="default")
         self.copies_plus.setFixedWidth(44)
         self.copies_plus.setAutoRepeat(True)
@@ -1455,11 +1423,9 @@ class MirlisMarkApp(QWidget):
         cw.addWidget(self.copies_input, 0)
         cw.addWidget(self.copies_plus, 0)
 
-        # одинаковая высота
         for w in (self.print_btn, self.repeat_btn, self.copies_btn, self.copies_minus, self.copies_plus, self.copies_input):
             w.setMinimumHeight(68)
 
-        # плоские кнопки степперов
         for w in (self.minus_btn, self.plus_btn, self.copies_minus, self.copies_plus):
             w.setObjectName("StepperBtn")
 
@@ -1477,7 +1443,7 @@ class MirlisMarkApp(QWidget):
         history_layout.setSpacing(12)
 
         history_title = HeaderLabel("История")
-        history_layout.addWidget(history_title, 0, Qt.AlignmentFlag.AlignHCenter)
+        history_layout.addWidget(history_title, 0, Qt.AlignHCenter)
 
         self.history_search = QLineEdit()
         self.history_search.setPlaceholderText("Поиск по истории")
@@ -1495,14 +1461,13 @@ class MirlisMarkApp(QWidget):
 
         self.history_scroll.setWidget(history_scroll_content)
 
-        # пагинация истории
         pager_row = QHBoxLayout()
         pager_row.setSpacing(8)
 
         self.history_prev_btn = ActionBtn("←", kind="default")
         self.history_next_btn = ActionBtn("→", kind="default")
         self.history_page_label = QLabel("Страница 1 из 1")
-        self.history_page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.history_page_label.setAlignment(Qt.AlignCenter)
         self.history_page_label.setStyleSheet("color: #6b7280; font-size: 12px;")
 
         pager_row.addWidget(self.history_prev_btn, 0)
@@ -1511,13 +1476,12 @@ class MirlisMarkApp(QWidget):
 
         history_layout.addLayout(pager_row)
 
-        # добавляем три панели в основной ряд с пропорциями 3:4:3
         row.addWidget(left_panel, 3)
         row.addWidget(center_panel, 4)
         row.addWidget(self.history_panel, 3)
         root.addLayout(row)
 
-# ---------------- Signals ----------------
+        # ---------------- Signals ----------------
         self.product_combo.currentTextChanged.connect(self.on_product_changed)
         self.unit_combo.currentTextChanged.connect(self.refresh_preview)
         self.qty_input.textChanged.connect(self.refresh_preview)
@@ -1540,12 +1504,10 @@ class MirlisMarkApp(QWidget):
         self.copies_input.textChanged.connect(self._sanitize_copies)
         self.label_size_combo.currentIndexChanged.connect(self._on_label_size_changed)
 
-        # editor signals: чтобы не откатывало форматирование
         self.preview.textChanged.connect(self._on_preview_text_changed)
         self.preview.cursorPositionChanged.connect(self._sync_format_toolbar_from_cursor)
         self.preview.selectionChanged.connect(self._sync_format_toolbar_from_cursor)
 
-        # toolbar actions
         self.btn_font_minus.clicked.connect(lambda: self._change_font_size(-1))
         self.btn_font_plus.clicked.connect(lambda: self._change_font_size(+1))
         self.font_size_combo.currentTextChanged.connect(self.on_font_size_combo_changed)
@@ -1554,51 +1516,44 @@ class MirlisMarkApp(QWidget):
         self.btn_italic.clicked.connect(self._toggle_italic_on_selection)
         self.btn_underline.clicked.connect(self._toggle_underline_on_selection)
 
-        self.btn_align_left.clicked.connect(lambda: self._set_alignment(Qt.AlignmentFlag.AlignLeft))
-        self.btn_align_center.clicked.connect(lambda: self._set_alignment(Qt.AlignmentFlag.AlignHCenter))
-        self.btn_align_right.clicked.connect(lambda: self._set_alignment(Qt.AlignmentFlag.AlignRight))
-        self.btn_align_justify.clicked.connect(lambda: self._set_alignment(Qt.AlignmentFlag.AlignJustify))
+        self.btn_align_left.clicked.connect(lambda: self._set_alignment(Qt.AlignLeft))
+        self.btn_align_center.clicked.connect(lambda: self._set_alignment(Qt.AlignHCenter))
+        self.btn_align_right.clicked.connect(lambda: self._set_alignment(Qt.AlignRight))
+        self.btn_align_justify.clicked.connect(lambda: self._set_alignment(Qt.AlignJustify))
 
         self.font_combo.currentFontChanged.connect(self._set_font_family_on_selection)
         self.preview_header.doubleClicked.connect(self._toggle_preview_manual_mode)
         self.manual_datetime_picker.dateTimeChanged.connect(self.refresh_preview)
 
-        # история: поиск и пагинация
         self.history_search.textChanged.connect(self._on_history_search_text_changed)
         self.history_prev_btn.clicked.connect(lambda: self._change_history_page(-1))
         self.history_next_btn.clicked.connect(lambda: self._change_history_page(+1))
 
-        # дефолт шрифта редактора
         self.preview.setFont(QFont("Segoe UI", self._base_font_size))
 
-        # ВАЖНО: применяем стиль комбобоксов явно (иначе иногда теряются подстили)
         for cb in (self.product_combo, self.unit_combo, self.made_combo, self.checked_combo, self.font_combo, self.label_size_combo):
             cb.setObjectName("ComboWithArrow")
 
-        # инициализация состояния истории
         self._rebuild_history_view()
 
     def _load_logo(self):
         if os.path.exists(LOGO_PATH):
             pix = QPixmap(LOGO_PATH)
             if not pix.isNull():
-                # масштабируем по высоте 56px (× dpr для чёткости)
                 target_h = 56
-                dpr = self.devicePixelRatio() if hasattr(self, 'devicePixelRatio') else 2.0
+                dpr = self.devicePixelRatioF() if hasattr(self, 'devicePixelRatioF') else 2.0
                 scaled = pix.scaledToHeight(
                     int(target_h * dpr),
-                    Qt.TransformationMode.SmoothTransformation,
+                    Qt.SmoothTransformation,
                 )
                 scaled.setDevicePixelRatio(dpr)
                 self.logo.setPixmap(scaled)
                 return
         self.logo.setText("")
 
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._resize_label_preview()
-        # адаптивность: панель истории скрываем на узких окнах
         if hasattr(self, "history_panel"):
             self.history_panel.setVisible(self.width() >= 1100)
 
@@ -1621,13 +1576,11 @@ class MirlisMarkApp(QWidget):
 
         self.preview.setFixedSize(int(target_w), int(target_h))
 
-    def _on_label_size_changed(self, index: int):
-        """При смене размера этикетки обновляем высоту и пропорции превью."""
+    def _on_label_size_changed(self, index):
         self.label_h_mm = 80.0 if index == 0 else 60.0
         self._resize_label_preview()
 
     def _toggle_preview_manual_mode(self):
-        """Переключение ручного режима: двойной клик по заголовку «Предпросмотр»."""
         self._preview_manual_mode = not self._preview_manual_mode
         on = self._preview_manual_mode
         self.manual_datetime_label.setVisible(on)
@@ -1638,7 +1591,7 @@ class MirlisMarkApp(QWidget):
         self.refresh_preview()
 
     # ---------------- Excel / data ----------------
-    def reload_excel(self, show_message: bool = True):
+    def reload_excel(self, show_message=True):
         try:
             current_product = self.product_combo.currentText().strip()
             current_unit = self.unit_combo.currentText()
@@ -1658,8 +1611,6 @@ class MirlisMarkApp(QWidget):
             self.staff_made = [s for s in load_staff(self.excel_path, SHEET_MADE) if int(s.get("active", 0)) == 1]
             self.staff_checked = [s for s in load_staff(self.excel_path, SHEET_CHECKED) if int(s.get("active", 0)) == 1]
 
-            # excel_loader возвращает {"name": "..."} — а у нас UI ждёт fio.
-            # поэтому нормализуем к "fio".
             self.staff_made = [{"fio": (x.get("fio") or x.get("name") or "").strip(), "active": x.get("active", 1)} for x in self.staff_made]
             self.staff_checked = [{"fio": (x.get("fio") or x.get("name") or "").strip(), "active": x.get("active", 1)} for x in self.staff_checked]
 
@@ -1672,7 +1623,6 @@ class MirlisMarkApp(QWidget):
             self.loaded_at_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             self.update_excel_status()
 
-            # восстановим поля
             if current_qty:
                 self.qty_input.setText(current_qty)
 
@@ -1690,8 +1640,6 @@ class MirlisMarkApp(QWidget):
                 if idx >= 0:
                     self.checked_combo.setCurrentIndex(idx)
 
-            # продукт — НЕ ставим автоматически при первом запуске
-            # Если человек что-то вводил — оставим. Если пусто — оставим пустым.
             if current_product:
                 self.on_product_changed(current_product)
                 if current_unit:
@@ -1699,7 +1647,6 @@ class MirlisMarkApp(QWidget):
                     if idxu >= 0:
                         self.unit_combo.setCurrentIndex(idxu)
             else:
-                # очистим units, чтобы не подставлялись
                 self.unit_combo.clear()
                 self.unit_combo.addItem("— выберите —")
 
@@ -1713,7 +1660,7 @@ class MirlisMarkApp(QWidget):
                 f"Не удалось загрузить Excel.\n\nФайл: {self.excel_path}\nОшибка: {e}",
             )
 
-    def fill_products(self, current_product: str | None = None):
+    def fill_products(self, current_product=None):
         self.product_combo.blockSignals(True)
         self.product_combo.clear()
 
@@ -1723,7 +1670,6 @@ class MirlisMarkApp(QWidget):
 
         self.product_model.setStringList(names)
 
-        # критично: НЕ выбирать первый элемент автоматически
         self.product_combo.setCurrentIndex(-1)
         self.product_combo.setEditText("")
 
@@ -1783,7 +1729,7 @@ class MirlisMarkApp(QWidget):
             self,
             "Выберите папку с файлом products.xlsx",
             current_dir,
-            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
         )
 
         if not folder:
@@ -1810,27 +1756,26 @@ class MirlisMarkApp(QWidget):
         self.reload_excel(show_message=True)
 
     # ---------------- Helpers ----------------
-    def get_product(self, name: str):
+    def get_product(self, name):
         name = (name or "").strip()
         return next((p for p in self.products if (p.get("name") or "").strip() == name), None)
 
-    def _clear_layout(self, layout: QHBoxLayout | QVBoxLayout):
-        """Полностью очищает layout от вложенных виджетов/лейаутов."""
+    def _clear_layout(self, layout):
         while layout.count():
             item = layout.takeAt(0)
             w = item.widget()
             child_layout = item.layout()
             if child_layout is not None:
-                self._clear_layout(child_layout)  # type: ignore[arg-type]
+                self._clear_layout(child_layout)
             if w is not None:
                 w.deleteLater()
 
     # ---------------- History helpers ----------------
-    def _filtered_history_entries(self) -> list[dict]:
+    def _filtered_history_entries(self):
         if not self._history_filter_text:
             return list(self.history_entries)
         q = self._history_filter_text
-        result: list[dict] = []
+        result = []
         for e in self.history_entries:
             text = " ".join(
                 [
@@ -1847,7 +1792,6 @@ class MirlisMarkApp(QWidget):
         return result
 
     def _rebuild_history_view(self):
-        """Перестроить список карточек истории + пагинацию."""
         if not hasattr(self, "history_list_layout"):
             return
 
@@ -1861,12 +1805,12 @@ class MirlisMarkApp(QWidget):
         end = start + page_size
         page_items = filtered_history[start:end]
 
-        self._clear_layout(self.history_list_layout)  # type: ignore[arg-type]
+        self._clear_layout(self.history_list_layout)
 
         for e in page_items:
             card = QFrame()
             card.setObjectName("HistoryCard")
-            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.setCursor(Qt.PointingHandCursor)
             card.setProperty("selected", (e.get("id") == getattr(self, "_selected_history_id", None)))
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(10, 8, 10, 8)
@@ -1877,11 +1821,11 @@ class MirlisMarkApp(QWidget):
 
             prod_label = QLabel(str(e.get("product", "")))
             prod_label.setStyleSheet("font-weight: 600;")
-            prod_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            prod_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             qty_label = QLabel(str(e.get("qty", "")))
-            qty_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            qty_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             qty_label.setStyleSheet("font-weight: 600; color: #111827;")
-            qty_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            qty_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             top_row.addWidget(prod_label, 1)
             top_row.addWidget(qty_label, 0)
@@ -1892,20 +1836,20 @@ class MirlisMarkApp(QWidget):
             mid_text = " · ".join(mid_parts) if mid_parts else ""
             mid_row = QLabel(mid_text)
             mid_row.setStyleSheet("color: #6b7280; font-size: 12px;")
-            mid_row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            mid_row.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             bottom_row = QHBoxLayout()
             bottom_row.setSpacing(6)
 
             time_label = QLabel(str(e.get("time", "")))
             time_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
-            time_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            time_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             batch = str(e.get("batch", ""))
             batch_label = QLabel(f"№ {batch}" if batch else "")
-            batch_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            batch_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             batch_label.setStyleSheet("color: #6b7280; font-size: 12px;")
-            batch_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            batch_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             bottom_row.addWidget(time_label, 1)
             bottom_row.addWidget(batch_label, 0)
@@ -1914,7 +1858,6 @@ class MirlisMarkApp(QWidget):
             card_layout.addWidget(mid_row)
             card_layout.addLayout(bottom_row)
 
-            # важно: ent=e чтобы не было бага замыкания
             card.mousePressEvent = (lambda ev, ent=e: self._on_history_clicked(ent))
             card.style().unpolish(card)
             card.style().polish(card)
@@ -1922,7 +1865,6 @@ class MirlisMarkApp(QWidget):
 
         self.history_list_layout.addStretch(1)
 
-        # обновим подпись и активность кнопок пагинации
         if hasattr(self, "history_page_label"):
             self.history_page_label.setText(f"Страница {self.history_page + 1} из {pages}")
         if hasattr(self, "history_prev_btn"):
@@ -1930,16 +1872,16 @@ class MirlisMarkApp(QWidget):
         if hasattr(self, "history_next_btn"):
             self.history_next_btn.setEnabled(self.history_page < pages - 1)
 
-    def _on_history_search_text_changed(self, text: str):
+    def _on_history_search_text_changed(self, text):
         self._history_filter_text = (text or "").strip().lower()
         self.history_page = 0
         self._rebuild_history_view()
 
-    def _change_history_page(self, delta: int):
+    def _change_history_page(self, delta):
         self.history_page += delta
         self._rebuild_history_view()
 
-    def _build_history_entry_from_label(self, label, qty_display: str, unit_ui: str) -> dict:
+    def _build_history_entry_from_label(self, label, qty_display, unit_ui):
         produced_at = getattr(label, "produced_at", datetime.now())
         preview_text = (
             f"{getattr(label, 'weekday', '')}\n"
@@ -1963,7 +1905,6 @@ class MirlisMarkApp(QWidget):
             "checked_by": getattr(label, "checked_by", ""),
             "checked_manual": bool(self.checked_manual.isChecked()),
             "preview_text": preview_text,
-            # поля для отображения карточки
             "product": getattr(label, "product_name", ""),
             "qty": f"{qty_display} {unit_ui}".strip(),
             "made": getattr(label, "made_by", ""),
@@ -1972,25 +1913,22 @@ class MirlisMarkApp(QWidget):
             "batch": getattr(label, "batch", ""),
         }
 
-    def _append_history_entry(self, entry: dict):
-        # newest-first: новая запись должна быть сверху
+    def _append_history_entry(self, entry):
         if not hasattr(self, "history_entries") or not isinstance(self.history_entries, list):
             self.history_entries = []
         self.history_entries.insert(0, entry)
-        # при новом элементе остаёмся на 1-й странице (там самые новые), если нет фильтра
         if not self._history_filter_text:
             self.history_page = 0
         self._rebuild_history_view()
 
-    def _on_history_clicked(self, entry: dict):
+    def _on_history_clicked(self, entry):
         self._selected_history_id = entry.get("id")
         self.apply_history_entry(entry)
         self._rebuild_history_view()
 
-    def apply_history_entry(self, entry: dict):
+    def apply_history_entry(self, entry):
         self._loading_from_history = True
         try:
-            # блокируем сигналы формы, чтобы не запускать лишние обработчики
             to_block = (
                 self.product_combo,
                 self.qty_input,
@@ -2012,17 +1950,14 @@ class MirlisMarkApp(QWidget):
             checked_by = str(entry.get("checked_by") or entry.get("checked") or "").strip()
             checked_manual = bool(entry.get("checked_manual", False))
 
-            # продукт
             idx = self.product_combo.findText(product_name)
             if idx >= 0:
                 self.product_combo.setCurrentIndex(idx)
             else:
                 self.product_combo.setEditText(product_name)
 
-            # наполняем единицы измерения через существующую логику (refresh_preview подавлен guard-ом)
             self.on_product_changed(product_name)
 
-            # единица измерения
             self.unit_combo.blockSignals(True)
             try:
                 if unit_ui:
@@ -2032,10 +1967,8 @@ class MirlisMarkApp(QWidget):
             finally:
                 self.unit_combo.blockSignals(False)
 
-            # количество
             self.qty_input.setText(qty_value)
 
-            # изготовил
             self.made_manual.setChecked(made_manual)
             self.toggle_made_mode()
             if made_manual:
@@ -2049,7 +1982,6 @@ class MirlisMarkApp(QWidget):
                     self.toggle_made_mode()
                     self.made_input.setText(made_by)
 
-            # цех
             self.checked_manual.setChecked(checked_manual)
             self.toggle_checked_mode()
             if checked_manual:
@@ -2077,7 +2009,6 @@ class MirlisMarkApp(QWidget):
                 w.blockSignals(False)
             self._loading_from_history = False
 
-        # предпросмотр выбранной записи (HTML сохраняет форматирование)
         preview_html = entry.get("preview_html")
         preview_text = entry.get("preview_text")
         if isinstance(preview_html, str) and preview_html.strip():
@@ -2109,7 +2040,7 @@ class MirlisMarkApp(QWidget):
         if not getattr(self, "_loading_from_history", False):
             self.refresh_preview()
 
-    def on_product_changed(self, product_name: str):
+    def on_product_changed(self, product_name):
         self.unit_combo.blockSignals(True)
         self.unit_combo.clear()
         self.unit_combo.addItem("— выберите —")
@@ -2132,7 +2063,7 @@ class MirlisMarkApp(QWidget):
         if not getattr(self, "_loading_from_history", False):
             self.refresh_preview()
 
-    def _step_for_unit(self) -> float:
+    def _step_for_unit(self):
         unit_ru = self.unit_combo.currentText()
         return 1.0 if unit_ru == "шт" else 0.1
 
@@ -2155,7 +2086,6 @@ class MirlisMarkApp(QWidget):
         self.qty_input.setText(str(round(value, 3)).rstrip("0").rstrip("."))
 
     def clear_fields(self):
-        # НЕ выбираем продукт, очищаем всё
         self.product_combo.setCurrentIndex(-1)
         self.product_combo.setEditText("")
 
@@ -2171,26 +2101,25 @@ class MirlisMarkApp(QWidget):
         self.made_input.clear()
         self.checked_input.clear()
 
-        # сброс редактора к авто-превью
         self._user_edited_preview = False
 
         self.refresh_preview()
 
     # ---------------- Preview / validation ----------------
-    def _unit_code_from_ui(self, unit_text: str) -> str | None:
+    def _unit_code_from_ui(self, unit_text):
         if unit_text == "кг":
             return "kg"
         if unit_text == "шт":
             return "pcs"
         return None
 
-    def _made_value(self) -> str:
+    def _made_value(self):
         if self.made_manual.isChecked():
             return self.made_input.text().strip()
         val = self.made_combo.currentText().strip()
         return "" if val.startswith("—") else val
 
-    def _checked_value(self) -> str:
+    def _checked_value(self):
         if self.checked_manual.isChecked():
             return self.checked_input.text().strip()
         val = self.checked_combo.currentText().strip()
@@ -2198,12 +2127,7 @@ class MirlisMarkApp(QWidget):
 
     _WEEKDAYS = {"ПОНЕДЕЛЬНИК", "ВТОРНИК", "СРЕДА", "ЧЕТВЕРГ", "ПЯТНИЦА", "СУББОТА", "ВОСКРЕСЕНЬЕ"}
 
-    def _set_preview_text_programmatically(self, text: str):
-        """
-        Вставка текста в редактор с дефолтным форматированием:
-        - весь текст: размер _base_font_size (20)
-        - первая строка (день недели): жирный, размер 26, по центру
-        """
+    def _set_preview_text_programmatically(self, text):
         self._updating_preview = True
         try:
             self.preview.blockSignals(True)
@@ -2212,58 +2136,49 @@ class MirlisMarkApp(QWidget):
             font_family = self.font_combo.currentFont().family()
             cursor = self.preview.textCursor()
 
-            # 1) весь текст — базовый шрифт
-            cursor.select(QTextCursor.SelectionType.Document)
+            cursor.select(QTextCursor.Document)
             fmt_base = QTextCharFormat()
             fmt_base.setFontFamily(font_family)
             fmt_base.setFontPointSize(float(self._base_font_size))
-            fmt_base.setFontWeight(QFont.Weight.Normal)
+            fmt_base.setFontWeight(QFont.Normal)
             cursor.mergeCharFormat(fmt_base)
             cursor.clearSelection()
 
-            # 2) первая строка — жирный, 26pt, по центру (only if it’s a weekday)
             first_line = text.strip().split("\n")[0].strip()
             if first_line in self._WEEKDAYS:
-                cursor.movePosition(QTextCursor.MoveOperation.Start)
-                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                cursor.movePosition(QTextCursor.Start)
+                cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
 
                 fmt_weekday = QTextCharFormat()
                 fmt_weekday.setFontFamily(font_family)
                 fmt_weekday.setFontPointSize(26.0)
-                fmt_weekday.setFontWeight(QFont.Weight.Bold)
+                fmt_weekday.setFontWeight(QFont.Bold)
                 cursor.mergeCharFormat(fmt_weekday)
 
                 block_fmt = QTextBlockFormat()
-                block_fmt.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+                block_fmt.setAlignment(Qt.AlignHCenter)
                 cursor.mergeBlockFormat(block_fmt)
 
             cursor.clearSelection()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.movePosition(QTextCursor.Start)
             self.preview.setTextCursor(cursor)
         finally:
             self.preview.blockSignals(False)
             self._updating_preview = False
 
-    def _set_preview_html_programmatically(self, html: str):
-        """
-        Восстановление HTML-форматирования в редактор (жирный, курсив, выравнивание и т.д.)
-        без срабатывания «пользовательского редактирования».
-        """
+    def _set_preview_html_programmatically(self, html):
         self._updating_preview = True
         try:
             self.preview.blockSignals(True)
             self.preview.setHtml(html)
             cursor = self.preview.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.movePosition(QTextCursor.Start)
             self.preview.setTextCursor(cursor)
         finally:
             self.preview.blockSignals(False)
             self._updating_preview = False
 
-    def _build_label_plain_text(self) -> tuple[str, bool]:
-        """
-        Возвращает (text, can_print)
-        """
+    def _build_label_plain_text(self):
         product_name = self.product_combo.currentText().strip()
         product = self.get_product(product_name)
 
@@ -2328,12 +2243,9 @@ class MirlisMarkApp(QWidget):
         text, can_print = self._build_label_plain_text()
         self.print_btn.setEnabled(can_print)
 
-        # если пользователь уже начал редактировать предпросмотр — НЕ перетираем
-        # (именно это раньше выглядело как “откат обратно”)
         if self._user_edited_preview:
             return
 
-        # если пользователь работает в редакторе (фокус/выделение) — не сбрасываем
         if self.preview.hasFocus():
             return
 
@@ -2342,23 +2254,20 @@ class MirlisMarkApp(QWidget):
     def _on_preview_text_changed(self):
         if self._updating_preview:
             return
-        # пользователь что-то менял руками — больше не перетираем автогенерацией
         self._user_edited_preview = True
 
     # ---------------- Editor formatting (selection-only) ----------------
-    def _merge_format_on_selection(self, fmt: QTextCharFormat):
+    def _merge_format_on_selection(self, fmt):
         cursor = self.preview.textCursor()
         if not cursor.hasSelection():
-            # если нет выделения — применяем к текущему слову (как в Word)
-            cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+            cursor.select(QTextCursor.WordUnderCursor)
         cursor.mergeCharFormat(fmt)
         self.preview.mergeCurrentCharFormat(fmt)
 
     def _toggle_bold_on_selection(self):
         fmt = QTextCharFormat()
-        # состояние берём из самой кнопки (как в Word)
         desired_bold = self.btn_bold.isChecked()
-        fmt.setFontWeight(QFont.Weight.Bold if desired_bold else QFont.Weight.Normal)
+        fmt.setFontWeight(QFont.Bold if desired_bold else QFont.Normal)
         self._merge_format_on_selection(fmt)
         self._sync_format_toolbar_from_cursor()
 
@@ -2377,7 +2286,6 @@ class MirlisMarkApp(QWidget):
         self._sync_format_toolbar_from_cursor()
 
     def _sync_format_toolbar_from_cursor(self):
-        """Синхронизация состояний Ж/К/Ч и выравнивания с текущим форматированием, как в Word."""
         cursor = self.preview.textCursor()
         fmt = cursor.charFormat() if cursor.charFormat().isValid() else self.preview.currentCharFormat()
 
@@ -2389,16 +2297,15 @@ class MirlisMarkApp(QWidget):
         self.btn_align_right.blockSignals(True)
         self.btn_align_justify.blockSignals(True)
         try:
-            self.btn_bold.setChecked(fmt.fontWeight() >= QFont.Weight.Bold)
+            self.btn_bold.setChecked(fmt.fontWeight() >= QFont.Bold)
             self.btn_italic.setChecked(fmt.fontItalic())
             self.btn_underline.setChecked(fmt.fontUnderline())
 
-            # выравнивание — из блочного формата текущего абзаца
             align = cursor.blockFormat().alignment()
-            self.btn_align_left.setChecked(align == Qt.AlignmentFlag.AlignLeft)
-            self.btn_align_center.setChecked(align == Qt.AlignmentFlag.AlignHCenter)
-            self.btn_align_right.setChecked(align == Qt.AlignmentFlag.AlignRight)
-            self.btn_align_justify.setChecked(align == Qt.AlignmentFlag.AlignJustify)
+            self.btn_align_left.setChecked(align == Qt.AlignLeft)
+            self.btn_align_center.setChecked(align == Qt.AlignHCenter)
+            self.btn_align_right.setChecked(align == Qt.AlignRight)
+            self.btn_align_justify.setChecked(align == Qt.AlignJustify)
         finally:
             self.btn_bold.blockSignals(False)
             self.btn_italic.blockSignals(False)
@@ -2408,14 +2315,9 @@ class MirlisMarkApp(QWidget):
             self.btn_align_right.blockSignals(False)
             self.btn_align_justify.blockSignals(False)
 
-        # параллельно обновляем UI размера шрифта
         self._sync_font_size_from_cursor()
 
     def _sync_font_size_from_cursor(self):
-        """
-        Синхронизировать поле размера шрифта с текущей позицией курсора
-        (как в Word). Только отображение — не меняет _base_font_size.
-        """
         if not hasattr(self, "font_size_combo"):
             return
 
@@ -2436,37 +2338,33 @@ class MirlisMarkApp(QWidget):
         self.font_size_combo.lineEdit().setText(str(size_int))
         self.font_size_combo.blockSignals(False)
 
-    def _set_alignment(self, align_flag: Qt.AlignmentFlag):
-        # alignment в QTextEdit — на уровне блока.
-        # применяем к текущему блоку / блокам выделения (как в редакторах)
-        if align_flag == Qt.AlignmentFlag.AlignLeft:
-            self.preview.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        elif align_flag == Qt.AlignmentFlag.AlignHCenter:
-            self.preview.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        elif align_flag == Qt.AlignmentFlag.AlignRight:
-            self.preview.setAlignment(Qt.AlignmentFlag.AlignRight)
-        elif align_flag == Qt.AlignmentFlag.AlignJustify:
-            self.preview.setAlignment(Qt.AlignmentFlag.AlignJustify)
+    def _set_alignment(self, align_flag):
+        if align_flag == Qt.AlignLeft:
+            self.preview.setAlignment(Qt.AlignLeft)
+        elif align_flag == Qt.AlignHCenter:
+            self.preview.setAlignment(Qt.AlignHCenter)
+        elif align_flag == Qt.AlignRight:
+            self.preview.setAlignment(Qt.AlignRight)
+        elif align_flag == Qt.AlignJustify:
+            self.preview.setAlignment(Qt.AlignJustify)
         self._sync_format_toolbar_from_cursor()
 
-    def _set_font_family_on_selection(self, font: QFont):
+    def _set_font_family_on_selection(self, font):
         fmt = QTextCharFormat()
         fmt.setFontFamily(font.family())
         self._merge_format_on_selection(fmt)
 
-    def _change_font_size(self, delta: int):
+    def _change_font_size(self, delta):
         self._base_font_size = max(8, min(72, self._base_font_size + delta))
         fmt = QTextCharFormat()
         fmt.setFontPointSize(float(self._base_font_size))
         self._merge_format_on_selection(fmt)
-        # синхронизируем комбобокс размера
         if hasattr(self, "font_size_combo"):
             self.font_size_combo.blockSignals(True)
             self.font_size_combo.setCurrentText(str(self._base_font_size))
             self.font_size_combo.blockSignals(False)
 
-
-    def on_font_size_combo_changed(self, text: str):
+    def on_font_size_combo_changed(self, text):
         t = (text or "").strip()
         if not t:
             return
@@ -2479,13 +2377,12 @@ class MirlisMarkApp(QWidget):
         fmt = QTextCharFormat()
         fmt.setFontPointSize(float(size))
         self._merge_format_on_selection(fmt)
-        # синхронизируем комбобокс, если пользователь ввёл число
         if hasattr(self, "font_size_combo"):
             self.font_size_combo.blockSignals(True)
             self.font_size_combo.setCurrentText(str(size))
             self.font_size_combo.blockSignals(False)
 
-    def _get_copies(self) -> int:
+    def _get_copies(self):
         if not hasattr(self, "copies_input"):
             return 1
         v = _safe_int(self.copies_input.text().strip(), 1)
@@ -2511,7 +2408,7 @@ class MirlisMarkApp(QWidget):
             return
         self.copies_input.setText(str(max(1, self._get_copies() - 1)))
 
-    def _apply_copies_to_tspl(self, tspl: str, copies: int) -> str:
+    def _apply_copies_to_tspl(self, tspl, copies):
         lines = tspl.strip().splitlines()
         for i in range(len(lines) - 1, -1, -1):
             if lines[i].strip().upper().startswith("PRINT"):
@@ -2519,53 +2416,42 @@ class MirlisMarkApp(QWidget):
                 return "\n".join(lines).strip()
         return (tspl.strip() + f"\nPRINT {copies}").strip()
 
-# ---------------- Rendering preview → TSPL bitmap ----------------
+    # ---------------- Rendering preview → TSPL bitmap ----------------
     def _render_preview_to_tspl_bytes(
         self,
-        label_w_mm: float | None = None,
-        label_h_mm: float | None = None,
-        dpi: int = 203,
-        density: int = 10,
-        speed: int = 4,
-        threshold: int = 200,
-        copies: int = 1,
-    ) -> bytes:
-        """
-        WYSIWYG-рендеринг: берём QTextDocument из preview-редактора,
-        масштабируем в пиксели принтера (203 DPI). Размер этикетки берётся из выбора пользователя.
-        Важно: используем int() без round(), чтобы BITMAP height не превышал SIZE (TSPL).
-        """
+        label_w_mm=None,
+        label_h_mm=None,
+        dpi=203,
+        density=10,
+        speed=4,
+        threshold=200,
+        copies=1,
+    ):
         w_mm = label_w_mm if label_w_mm is not None else getattr(self, "label_w_mm", 58.0)
         h_mm = label_h_mm if label_h_mm is not None else getattr(self, "label_h_mm", 80.0)
         w_px = int(w_mm / 25.4 * dpi)
         h_px = int(h_mm / 25.4 * dpi)
 
-        # клонируем документ, чтобы не трогать редактор
         doc = self.preview.document().clone()
 
-        # используем размер viewport'а редактора — это ровно то,
-        # что пользователь видит; текст уже уложен по этой ширине
         vp_w = self.preview.viewport().width()
         vp_h = self.preview.viewport().height()
 
         doc.setPageSize(QSizeF(vp_w, vp_h))
 
-        # масштаб: из экранных пикселей редактора → в пиксели принтера
         scale_x = w_px / vp_w
         scale_y = h_px / vp_h
 
-        # рисуем на QImage в принтерном разрешении
-        img = QImage(w_px, h_px, QImage.Format.Format_RGB32)
+        img = QImage(w_px, h_px, QImage.Format_RGB32)
         img.fill(QColor(255, 255, 255))
 
         painter = QPainter(img)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
         painter.scale(scale_x, scale_y)
         doc.drawContents(painter)
         painter.end()
 
-        # --- конвертация в 1-bit TSPL bitmap ---
         width_bytes = (w_px + 7) // 8
         raster = bytearray()
 
@@ -2584,13 +2470,11 @@ class MirlisMarkApp(QWidget):
                         byte_val |= (1 << (7 - bit))
                 raster.append(byte_val)
 
-        # GAP 2 mm — стандарт; для части рулонов 58×60 зазор 3 mm (тогда задать gap_mm = 3)
         gap_mm = 2.0
         header = (
             f"SIZE {w_mm} mm, {h_mm} mm\r\n"
             f"GAP {gap_mm} mm, 0 mm\r\n"
         ).encode("ascii")
-        # Калибровка датчика зазора для 58×60: принтер ищет следующий GAP и не уходит в ошибку после первой этикетки
         if h_mm == 60:
             header += b"GAPDETECT\r\n"
         header += (
@@ -2606,7 +2490,7 @@ class MirlisMarkApp(QWidget):
 
         return header + bytes(raster) + tail
 
-# ---------------- Printing ----------------
+    # ---------------- Printing ----------------
     def print_label(self):
         preview_text = self.preview.toPlainText()
         preview_html = self.preview.toHtml()
@@ -2628,7 +2512,6 @@ class MirlisMarkApp(QWidget):
         self.last_printed_preview_text = preview_text
         self._last_printed_tspl_bytes = tspl_bytes
 
-        # только после успешной печати — в историю (старая структура entry для отображения)
         product_name = self.product_combo.currentText().strip()
         product = self.get_product(product_name)
         unit_ui = self.unit_combo.currentText()
@@ -2691,10 +2574,8 @@ class MirlisMarkApp(QWidget):
             return
         try:
             printer_name = win32print.GetDefaultPrinter()
-            # подставляем текущее количество копий
             copies = self._get_copies()
             if copies != 1:
-                # заменяем PRINT N в сохранённых байтах
                 tspl_bytes = tspl_bytes.rsplit(b"\r\nPRINT ", 1)[0] + f"\r\nPRINT {copies}\r\n".encode("ascii")
             print_raw(printer_name, tspl_bytes)
             if self.last_history_entry is not None:
@@ -2707,8 +2588,6 @@ class MirlisMarkApp(QWidget):
 
 
 def main():
-    # Автомасштабирование: UI спроектирован для 1920×1080.
-    # На меньших экранах масштабируем всё пропорционально.
     try:
         import ctypes
         user32 = ctypes.windll.user32
@@ -2723,9 +2602,8 @@ def main():
     except Exception:
         pass
 
-    # OpenGL rendering для качественного отображения splash video (2K/4K)
     fmt = QSurfaceFormat()
-    fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
+    fmt.setRenderableType(QSurfaceFormat.OpenGL)
     QSurfaceFormat.setDefaultFormat(fmt)
 
     app = QApplication(sys.argv)
@@ -2744,7 +2622,7 @@ def main():
     else:
         on_splash_finished()
 
-    sys.exit(app.exec())
+    sys.exit(app.exec_())
 
 if __name__ == "__main__":
     main()
