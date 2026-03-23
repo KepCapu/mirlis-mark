@@ -2501,9 +2501,10 @@ class MirlisMarkApp(QWidget):
         printer_name = win32print.GetDefaultPrinter()
 
         try:
-            tspl_bytes = self._render_preview_to_tspl_bytes(threshold=200, copies=self._get_copies())
+            copies = self._get_copies()
+            tspl_bytes = self._render_preview_to_tspl_bytes(threshold=200, copies=copies)
             n_bytes = print_raw(printer_name, tspl_bytes)
-            print("SENDING BITMAP...", n_bytes, "bytes")
+            print(f"SENDING BITMAP... {n_bytes} bytes, copies={copies}")
         except Exception as e:
             QMessageBox.warning(self, "Печать", f"Не удалось отправить на печать:\n{e}")
             return
