@@ -2444,7 +2444,7 @@ class MirlisMarkApp(QWidget):
         if not getattr(self, "hide_weekday_btn", None) or not self.hide_weekday_btn.isChecked():
             text_parts.append(f"{label.weekday}")
         else:
-            text_parts.append("")  # пустая строка вместо дня недели — текст остаётся на месте
+            text_parts.append(chr(160))  # невидимый заполнитель сохраняет высоту первой строки
         text_parts.append(f"Продукт: {label.product_name}")
         text_parts.append(f"Вес/шт: {label.qty_value} {label.qty_unit_ru}")
         text_parts.append(f"Дата/время: {format_dt(label.produced_at)}")
@@ -2846,6 +2846,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 
