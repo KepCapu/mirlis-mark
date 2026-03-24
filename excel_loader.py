@@ -3,14 +3,17 @@
 # Листы:
 #   - "продукт"    : товары
 #   - "изготовил"  : сотрудники, которые "Изготовил"
-#   - "проверил"   : сотрудники, которые "Проверил"
+#   - "цех"        : цехи
 #
 # Требования к колонкам (по-русски):
 #   Лист "продукт":
 #     Код | Наименование | Срок годности (ч) | Ед. измер. | Активен | Комментарий
 #
-#   Лист "изготовил" / "проверил":
+#   Лист "изготовил":
 #     ФИО | Активен
+#
+#   Лист "цех":
+#     Цех | Активен   (также принимает: ФИО, Название)
 #
 # Примечание по единицам:
 #   В Excel можно писать: "кг,шт" / "кг;шт" / "kg,pcs" / "kg;pcs"
@@ -119,8 +122,19 @@ def load_products(excel_path: str, sheet_name: str = "продукт") -> List[D
     # ищем индексы колонок по русским названиям
     idx_code = h.get("код")
     idx_name = h.get("наименование")
-    idx_life = h.get("срок годности (ч)") or h.get("срок годности(ч)") or h.get("срок годности")
-    idx_units = h.get("ед. измер.") or h.get("ед.измер.") or h.get("ед измер") or h.get("ед. измер")
+
+    idx_life = None
+    for key in ("срок годности (ч)", "срок годности(ч)", "срок годности"):
+        if key in h:
+            idx_life = h[key]
+            break
+
+    idx_units = None
+    for key in ("ед. измер.", "ед.измер.", "ед измер", "ед. измер"):
+        if key in h:
+            idx_units = h[key]
+            break
+
     idx_active = h.get("активен")
     idx_comment = h.get("комментарий")
 
@@ -161,8 +175,9 @@ def load_products(excel_path: str, sheet_name: str = "продукт") -> List[D
 
 def load_staff(excel_path: str, sheet_name: str) -> List[Dict[str, Any]]:
     """
-    Загружает сотрудников из листа (например "изготовил" или "проверил").
-    Возвращает список словарей: {"name": "Иванов И.И.", "active": 1}
+    Загружает сотрудников/цехи из листа (например "изготовил" или "цех").
+    Поддерживаемые заголовки колонки с именем: ФИО, Цех, Название, Name.
+    Возвращает список словарей: {"name": "...", "active": 1}
     """
     wb = load_workbook(excel_path, data_only=True)
     if sheet_name not in wb.sheetnames:
@@ -176,7 +191,12 @@ def load_staff(excel_path: str, sheet_name: str) -> List[Dict[str, Any]]:
     header = list(rows[0])
     h = _header_index(header)
 
-    idx_name = h.get("фио")
+    # ищем колонку с именем/названием: поддерживаем несколько вариантов заголовка
+    idx_name = None
+    for key in ("фио", "цех", "название", "name", "наименование"):
+        if key in h:
+            idx_name = h[key]
+            break
     idx_active = h.get("активен")
 
     staff: List[Dict[str, Any]] = []

@@ -1,4 +1,4 @@
-# main.py
+﻿# main.py
 # Mirlis Mark — Система маркировки
 # UI: "как на картинке" + редактор предпросмотра + ВИДИМЫЕ стрелочки в выпадающих списках
 #
@@ -48,6 +48,7 @@ from PyQt5.QtWidgets import (
     QTimeEdit,
     QCalendarWidget,
     QGridLayout,
+    QDialog,
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF
 from PyQt5.QtCore import QStringListModel
@@ -72,6 +73,7 @@ from PyQt5.QtMultimediaWidgets import QVideoWidget
 from excel_loader import load_products, load_staff
 from label_logic import build_label, format_dt
 from printer import print_text_as_bitmap_tspl, print_raw
+from openpyxl import load_workbook as _peek_workbook
 import win32print
 
 
@@ -129,11 +131,15 @@ def ensure_products_file() -> str:
 # Константы листов Excel (не пути)
 SHEET_PRODUCTS = "продукт"
 SHEET_MADE = "изготовил"
-SHEET_CHECKED = "проверил"
+SHEET_CHECKED = "цех"
 
 # Ресурсы интерфейса (через resource_path для работы из исходников и из exe)
 LOGO_PATH = resource_path("assets/logo.png")
 SPLASH_VIDEO_PATH = resource_path("assets/loadingscreen.mp4")
+HELP_IMG_PRODUCT = resource_path("assets/help_sheet_product.png")
+HELP_IMG_MADE = resource_path("assets/help_sheet_made.png")
+HELP_IMG_WORKSHOP = resource_path("assets/help_sheet_workshop.png")
+HELP_IMG_TABS = resource_path("assets/help_sheet_tabs.png")
 
 APP_TITLE = "Mirlis Mark — Система маркировки"
 APP_MARK = "Mark"
@@ -1127,7 +1133,7 @@ class MirlisMarkApp(QWidget):
         self.open_folder_btn.clicked.connect(self.open_excel_folder)
         top_layout.addWidget(self.open_folder_btn, 0, Qt.AlignVCenter)
 
-        self.choose_path_btn = ActionBtn("Выбрать путь", kind="default")
+        self.choose_path_btn = ActionBtn("Выбрать файл", kind="default")
         self.choose_path_btn.clicked.connect(self.choose_excel_path)
         top_layout.addWidget(self.choose_path_btn, 0, Qt.AlignVCenter)
 
@@ -1364,11 +1370,26 @@ class MirlisMarkApp(QWidget):
 
         self.preview_wrap = QFrame()
         self.preview_wrap.setObjectName("LabelWrap")
-        wrap_lay = QHBoxLayout(self.preview_wrap)
+
+        wrap_lay = QGridLayout(self.preview_wrap)
         wrap_lay.setContentsMargins(12, 12, 12, 12)
-        wrap_lay.addStretch(1)
-        wrap_lay.addWidget(self.preview, 0, Qt.AlignHCenter | Qt.AlignVCenter)
-        wrap_lay.addStretch(1)
+        wrap_lay.setHorizontalSpacing(0)
+        wrap_lay.setVerticalSpacing(0)
+
+        # Этикетка строго по центру области предпросмотра
+        wrap_lay.addWidget(self.preview, 0, 0, 1, 3, Qt.AlignHCenter | Qt.AlignTop)
+
+        # Кнопка справа, не влияет на центрирование этикетки
+        self.hide_weekday_btn = ToolBtn("Убрать\nдень недели")
+        self.hide_weekday_btn.setCheckable(True)
+        self.hide_weekday_btn.setChecked(False)
+        self.hide_weekday_btn.setMinimumSize(210, 88)
+        self.hide_weekday_btn.setMaximumWidth(210)
+        self.hide_weekday_btn.setStyleSheet(
+            "#ToolBtn { font-size: 18px; font-weight: 700; border-radius: 14px; padding: 12px 16px; }"
+        )
+        self.hide_weekday_btn.clicked.connect(self._on_hide_weekday_toggled)
+        wrap_lay.addWidget(self.hide_weekday_btn, 0, 2, Qt.AlignRight | Qt.AlignTop)
 
         right_layout.addWidget(self.preview_wrap, 1)
 
@@ -1385,6 +1406,7 @@ class MirlisMarkApp(QWidget):
         self.label_size_combo = ComboBoxFixedArrow()
         self.label_size_combo.addItem("58×80 мм")
         self.label_size_combo.addItem("58×60 мм")
+        self.label_size_combo.addItem("70×70 мм")
         self.label_size_combo.setCurrentIndex(0)
         self.label_size_combo.setMinimumWidth(140)
         label_size_row.addWidget(label_size_lab)
@@ -1577,7 +1599,8 @@ class MirlisMarkApp(QWidget):
         self.preview.setFixedSize(int(target_w), int(target_h))
 
     def _on_label_size_changed(self, index):
-        self.label_h_mm = 80.0 if index == 0 else 60.0
+        sizes = {0: (58.0, 80.0), 1: (58.0, 60.0), 2: (70.0, 70.0)}
+        self.label_w_mm, self.label_h_mm = sizes.get(index, (58.0, 80.0))
         self._resize_label_preview()
 
     def _toggle_preview_manual_mode(self):
@@ -1590,7 +1613,55 @@ class MirlisMarkApp(QWidget):
         self._user_edited_preview = False
         self.refresh_preview()
 
+    def _on_hide_weekday_toggled(self):
+        """Переключение режима «без дня недели» — обновляет превью."""
+        self._user_edited_preview = False
+        self.refresh_preview()
+
     # ---------------- Excel / data ----------------
+    def _resolve_sheet_names(self, excel_path):
+        """
+        Проверяет, что в файле есть все 3 обязательных листа.
+        Возвращает (sheet_products, sheet_made, sheet_checked) или None если файл не подходит.
+        """
+        wb = _peek_workbook(excel_path, read_only=True, data_only=True)
+        available = wb.sheetnames
+        wb.close()
+
+        # проверяем наличие каждого листа
+        sheet_products = SHEET_PRODUCTS if SHEET_PRODUCTS in available else ("products" if "products" in available else None)
+        sheet_made = SHEET_MADE if SHEET_MADE in available else None
+        sheet_checked = SHEET_CHECKED if SHEET_CHECKED in available else None
+
+        missing = []
+        if not sheet_products:
+            missing.append(f"«{SHEET_PRODUCTS}»")
+        if not sheet_made:
+            missing.append(f"«{SHEET_MADE}»")
+        if not sheet_checked:
+            missing.append(f"«{SHEET_CHECKED}»")
+
+        if missing:
+            available_str = ", ".join([f"«{s}»" for s in available]) if available else "(пусто)"
+            QMessageBox.warning(
+                self,
+                "Неподходящий файл",
+                f"В выбранном файле отсутствуют обязательные листы:\n"
+                f"{', '.join(missing)}\n\n"
+                f"Листы в файле: {available_str}\n\n"
+                f"Файл Excel должен содержать 3 листа:\n\n"
+                f"1. «{SHEET_PRODUCTS}» — список продукции\n"
+                f"   Заголовки: Код | Наименование | Срок годности (ч) | Ед. измер. | Активен\n\n"
+                f"2. «{SHEET_MADE}» — сотрудники\n"
+                f"   Заголовки: ФИО | Активен\n\n"
+                f"3. «{SHEET_CHECKED}» — цехи\n"
+                f"   Заголовки: Цех | Активен\n\n"
+                f"Первая строка каждого листа — заголовки, данные со второй строки.",
+            )
+            return None
+
+        return (sheet_products, sheet_made, sheet_checked)
+
     def reload_excel(self, show_message=True):
         try:
             current_product = self.product_combo.currentText().strip()
@@ -1604,12 +1675,32 @@ class MirlisMarkApp(QWidget):
             made_combo = self.made_combo.currentText()
             checked_combo = self.checked_combo.currentText()
 
-            products_all = load_products(self.excel_path)
-            self.products = [p for p in products_all if int(p.get("active", 0)) == 1]
-            self.products.sort(key=lambda x: (x.get("name") or "").lower())
+            # определяем имена листов
+            resolved = self._resolve_sheet_names(self.excel_path)
+            if resolved is None:
+                # пользователь отменил выбор листов
+                return
+            sheet_products, sheet_made, sheet_checked = resolved
 
-            self.staff_made = [s for s in load_staff(self.excel_path, SHEET_MADE) if int(s.get("active", 0)) == 1]
-            self.staff_checked = [s for s in load_staff(self.excel_path, SHEET_CHECKED) if int(s.get("active", 0)) == 1]
+            # загружаем продукты
+            if sheet_products:
+                products_all = load_products(self.excel_path, sheet_name=sheet_products)
+                self.products = [p for p in products_all if int(p.get("active", 0)) == 1]
+                self.products.sort(key=lambda x: (x.get("name") or "").lower())
+            else:
+                self.products = []
+
+            # загружаем сотрудников «изготовил»
+            if sheet_made:
+                self.staff_made = [s for s in load_staff(self.excel_path, sheet_made) if int(s.get("active", 0)) == 1]
+            else:
+                self.staff_made = []
+
+            # загружаем «цех»
+            if sheet_checked:
+                self.staff_checked = [s for s in load_staff(self.excel_path, sheet_checked) if int(s.get("active", 0)) == 1]
+            else:
+                self.staff_checked = []
 
             self.staff_made = [{"fio": (x.get("fio") or x.get("name") or "").strip(), "active": x.get("active", 1)} for x in self.staff_made]
             self.staff_checked = [{"fio": (x.get("fio") or x.get("name") or "").strip(), "active": x.get("active", 1)} for x in self.staff_checked]
@@ -1631,11 +1722,11 @@ class MirlisMarkApp(QWidget):
             self.made_input.setText(made_text)
             self.checked_input.setText(checked_text)
 
-            if made_combo:
+            if made_combo and not made_combo.startswith("—"):
                 idx = self.made_combo.findText(made_combo)
                 if idx >= 0:
                     self.made_combo.setCurrentIndex(idx)
-            if checked_combo:
+            if checked_combo and not checked_combo.startswith("—"):
                 idx = self.checked_combo.findText(checked_combo)
                 if idx >= 0:
                     self.checked_combo.setCurrentIndex(idx)
@@ -1690,6 +1781,9 @@ class MirlisMarkApp(QWidget):
             fio = (s.get("fio") or "").strip()
             if fio:
                 self.made_combo.addItem(fio)
+        # если только один сотрудник — выбираем автоматически
+        if self.made_combo.count() == 2:
+            self.made_combo.setCurrentIndex(1)
         self.made_combo.blockSignals(False)
 
         self.checked_combo.blockSignals(True)
@@ -1699,6 +1793,9 @@ class MirlisMarkApp(QWidget):
             fio = (s.get("fio") or "").strip()
             if fio:
                 self.checked_combo.addItem(fio)
+        # если только один цех — выбираем автоматически
+        if self.checked_combo.count() == 2:
+            self.checked_combo.setCurrentIndex(1)
         self.checked_combo.blockSignals(False)
 
     def update_excel_status(self):
@@ -1723,34 +1820,144 @@ class MirlisMarkApp(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def choose_excel_path(self):
-        current_dir = os.path.dirname(self.excel_path)
+        # показываем инструкцию с картинками перед выбором файла
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Структура файла Excel")
+        dlg.setMinimumSize(700, 500)
+        dlg.resize(750, 600)
 
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Выберите папку с файлом products.xlsx",
-            current_dir,
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(0, 0, 0, 12)
+        dlg_layout.setSpacing(0)
+
+        # скролл-область
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: #ffffff; }")
+
+        content = QWidget()
+        content.setStyleSheet("background: #ffffff;")
+        lay = QVBoxLayout(content)
+        lay.setContentsMargins(28, 24, 28, 24)
+        lay.setSpacing(16)
+
+        def add_title(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: #111827; background: transparent;")
+            lbl.setWordWrap(True)
+            lay.addWidget(lbl)
+
+        def add_text(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size: 14px; color: #374151; background: transparent;")
+            lbl.setWordWrap(True)
+            lay.addWidget(lbl)
+
+        def add_image(path, max_width=640):
+            if not os.path.isfile(path):
+                return
+            lbl = QLabel()
+            lbl.setStyleSheet("background: transparent;")
+            pix = QPixmap(path)
+            if not pix.isNull():
+                if pix.width() > max_width:
+                    pix = pix.scaledToWidth(max_width, Qt.SmoothTransformation)
+                lbl.setPixmap(pix)
+            lay.addWidget(lbl)
+
+        def add_separator():
+            sep = QFrame()
+            sep.setFrameShape(QFrame.HLine)
+            sep.setStyleSheet("color: #e5e7eb; background: #e5e7eb; border: none; max-height: 1px;")
+            lay.addWidget(sep)
+
+        # --- содержимое инструкции ---
+        add_title("Структура файла Excel")
+        add_text(
+            "Файл должен содержать 3 листа с точными названиями: «продукт», «изготовил», «цех».\n"
+            "Первая строка каждого листа — заголовки колонок, данные начинаются со второй строки."
         )
 
-        if not folder:
+        add_separator()
+
+        add_text("Внизу файла должны быть видны 3 вкладки:")
+        add_image(HELP_IMG_TABS)
+
+        add_separator()
+
+        add_title("1. Лист «продукт»")
+        add_text(
+            "Заголовки: Код | Наименование | Срок годности (ч) | Ед. измер. | Активен | Комментарий\n\n"
+            "• «Ед. измер.» — через запятую: кг, шт или кг,шт\n"
+            "• «Активен» — Да или 1 (показывать), Нет или 0 (скрыть)"
+        )
+        add_image(HELP_IMG_PRODUCT)
+
+        add_separator()
+
+        add_title("2. Лист «изготовил»")
+        add_text("Заголовки: ФИО | Активен")
+        add_image(HELP_IMG_MADE)
+
+        add_separator()
+
+        add_title("3. Лист «цех»")
+        add_text("Заголовки: Цех | Активен")
+        add_image(HELP_IMG_WORKSHOP)
+
+        add_separator()
+
+        add_text(
+            "Если в листе «изготовил» или «цех» только одна запись — "
+            "она подставится автоматически, и работнику не нужно будет её выбирать каждый раз."
+        )
+
+        scroll.setWidget(content)
+        dlg_layout.addWidget(scroll, 1)
+
+        # кнопки
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(20, 0, 20, 0)
+        btn_row.setSpacing(12)
+        btn_row.addStretch(1)
+
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.setMinimumHeight(40)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.clicked.connect(dlg.reject)
+
+        btn_ok = QPushButton("Выбрать файл")
+        btn_ok.setMinimumHeight(40)
+        btn_ok.setCursor(Qt.PointingHandCursor)
+        btn_ok.setStyleSheet(
+            "QPushButton { background: #16a34a; color: #ffffff; font-weight: 700; "
+            "border: 1px solid #15803d; border-radius: 12px; padding: 8px 24px; }"
+            "QPushButton:hover { background: #15803d; }"
+        )
+        btn_ok.clicked.connect(dlg.accept)
+
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_ok)
+        dlg_layout.addLayout(btn_row)
+
+        if dlg.exec_() != QDialog.Accepted:
             return
 
-        new_path = os.path.join(folder, "products.xlsx")
+        current_dir = os.path.dirname(self.excel_path)
 
-        if not os.path.isfile(new_path):
-            QMessageBox.warning(
-                self,
-                "Файл не найден",
-                f"В выбранной папке не найден файл products.xlsx.\n\n"
-                f"Путь: {folder}\n\n"
-                f"Убедитесь, что в папке есть файл products.xlsx "
-                f"с листами «продукт», «изготовил», «проверил».",
-            )
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл Excel с данными",
+            current_dir,
+            "Excel файлы (*.xlsx *.xls);;Все файлы (*)",
+        )
+
+        if not file_path:
             return
 
-        self.excel_path = new_path
+        self.excel_path = file_path
         settings = _load_settings()
-        settings["excel_path"] = new_path
+        settings["excel_path"] = file_path
         _save_settings(settings)
 
         self.reload_excel(show_message=True)
@@ -2095,8 +2302,16 @@ class MirlisMarkApp(QWidget):
         self.made_manual.setChecked(False)
         self.checked_manual.setChecked(False)
 
-        self.made_combo.setCurrentIndex(0)
-        self.checked_combo.setCurrentIndex(0)
+        # если в списке один вариант — оставляем автовыбор, иначе сбрасываем
+        if self.made_combo.count() == 2:
+            self.made_combo.setCurrentIndex(1)
+        else:
+            self.made_combo.setCurrentIndex(0)
+
+        if self.checked_combo.count() == 2:
+            self.checked_combo.setCurrentIndex(1)
+        else:
+            self.checked_combo.setCurrentIndex(0)
 
         self.made_input.clear()
         self.checked_input.clear()
@@ -2225,16 +2440,20 @@ class MirlisMarkApp(QWidget):
             produced_at=produced_at,
         )
 
-        text = (
-            f"{label.weekday}\n"
-            f"Продукт: {label.product_name}\n"
-            f"Вес/шт: {label.qty_value} {label.qty_unit_ru}\n"
-            f"Дата/время: {format_dt(label.produced_at)}\n"
-            f"№ партии: {label.batch}\n"
-            f"Годен до: {format_dt(label.expires_at)}\n"
-            f"Изготовил: {label.made_by}\n"
-            f"Цех: {label.checked_by}\n"
-        )
+        text_parts = []
+        if not getattr(self, "hide_weekday_btn", None) or not self.hide_weekday_btn.isChecked():
+            text_parts.append(f"{label.weekday}")
+        else:
+            text_parts.append("")  # пустая строка вместо дня недели — текст остаётся на месте
+        text_parts.append(f"Продукт: {label.product_name}")
+        text_parts.append(f"Вес/шт: {label.qty_value} {label.qty_unit_ru}")
+        text_parts.append(f"Дата/время: {format_dt(label.produced_at)}")
+        text_parts.append(f"№ партии: {label.batch}")
+        text_parts.append(f"Годен до: {format_dt(label.expires_at)}")
+        text_parts.append(f"Изготовил: {label.made_by}")
+        text_parts.append(f"Цех: {label.checked_by}")
+
+        text = "\n".join(text_parts) + "\n"
         return (text, True)
 
     def refresh_preview(self):
@@ -2627,3 +2846,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+

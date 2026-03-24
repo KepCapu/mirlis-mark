@@ -28,7 +28,7 @@ VersionInfoCopyright=KepCapu
 
 
 [Tasks]
-Name: "desktopicon"; Description: "Create desktop shortcut"; Flags: unchecked
+Name: "desktopicon"; Description: "Create desktop shortcut";
 
 
 [Files]
