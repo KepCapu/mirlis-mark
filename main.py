@@ -1185,7 +1185,7 @@ class MirlisMarkApp(QWidget):
         col_units.addWidget(lab_units)
 
         self.unit_combo = ComboBoxFixedArrow()
-        self.unit_combo.addItem("— выберите —")
+        self.unit_combo.addItem("")
         col_units.addWidget(self.unit_combo)
         grid.addLayout(col_units, 1)
 
@@ -1858,7 +1858,7 @@ class MirlisMarkApp(QWidget):
                         self.unit_combo.setCurrentIndex(idxu)
             else:
                 self.unit_combo.clear()
-                self.unit_combo.addItem("— выберите —")
+                self.unit_combo.addItem("")
 
             if show_message:
                 QMessageBox.information(self, "Готово", "Excel обновлён.")
@@ -2369,7 +2369,7 @@ class MirlisMarkApp(QWidget):
     def on_product_changed(self, product_name):
         self.unit_combo.blockSignals(True)
         self.unit_combo.clear()
-        self.unit_combo.addItem("— выберите —")
+        self.unit_combo.addItem("")
 
         product = self.get_product(product_name)
         if product:
@@ -2962,6 +2962,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
