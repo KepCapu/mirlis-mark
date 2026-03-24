@@ -1316,15 +1316,18 @@ class MirlisMarkApp(QWidget):
         f_un.setUnderline(True)
         self.btn_underline.setFont(f_un)
 
-        self.btn_align_left = ToolBtn("≡")
-        self.btn_align_center = ToolBtn("≡")
-        self.btn_align_right = ToolBtn("≡")
-        self.btn_align_justify = ToolBtn("≡")
+        self.btn_align_left = ToolBtn("")
+        self.btn_align_center = ToolBtn("")
+        self.btn_align_right = ToolBtn("")
 
-        self.btn_align_left.setStyleSheet("#ToolBtn { font-weight: 900; }")
-        self.btn_align_center.setStyleSheet("#ToolBtn { font-weight: 900; }")
-        self.btn_align_right.setStyleSheet("#ToolBtn { font-weight: 900; }")
-        self.btn_align_justify.setStyleSheet("#ToolBtn { font-weight: 900; }")
+        for btn, mode in (
+            (self.btn_align_left, "left"),
+            (self.btn_align_center, "center"),
+            (self.btn_align_right, "right"),
+        ):
+            btn.setIcon(self._make_align_icon(mode))
+            btn.setIconSize(QSize(26, 18))
+            btn.setFixedWidth(62)
 
         self.font_combo = QFontComboBox()
         self.font_combo.setObjectName("ComboWithArrow")
@@ -1341,7 +1344,6 @@ class MirlisMarkApp(QWidget):
         tb.addWidget(self.btn_align_left)
         tb.addWidget(self.btn_align_center)
         tb.addWidget(self.btn_align_right)
-        tb.addWidget(self.btn_align_justify)
         tb.addStretch(1)
         tb.addWidget(self.font_combo)
 
@@ -1541,7 +1543,6 @@ class MirlisMarkApp(QWidget):
         self.btn_align_left.clicked.connect(lambda: self._set_alignment(Qt.AlignLeft))
         self.btn_align_center.clicked.connect(lambda: self._set_alignment(Qt.AlignHCenter))
         self.btn_align_right.clicked.connect(lambda: self._set_alignment(Qt.AlignRight))
-        self.btn_align_justify.clicked.connect(lambda: self._set_alignment(Qt.AlignJustify))
 
         self.font_combo.currentFontChanged.connect(self._set_font_family_on_selection)
         self.preview_header.doubleClicked.connect(self._toggle_preview_manual_mode)
@@ -1558,6 +1559,35 @@ class MirlisMarkApp(QWidget):
 
         self._rebuild_history_view()
 
+    def _make_align_icon(self, mode):
+        pix = QPixmap(26, 18)
+        pix.fill(Qt.transparent)
+
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
+        color = QColor("#111827")
+        bar_h = 2
+        gaps = [2, 8, 14]
+
+        if mode == "left":
+            widths = [16, 20, 14]
+            xs = [3, 3, 3]
+        elif mode == "center":
+            widths = [16, 20, 14]
+            xs = [(26 - w) // 2 for w in widths]
+        elif mode == "right":
+            widths = [16, 20, 14]
+            xs = [26 - w - 3 for w in widths]
+        else:
+            widths = [18, 18, 18]
+            xs = [4, 4, 4]
+
+        for x, y, w in zip(xs, gaps, widths):
+            painter.fillRect(x, y, w, bar_h, color)
+
+        painter.end()
+        return QIcon(pix)
     def _load_logo(self):
         if os.path.exists(LOGO_PATH):
             pix = QPixmap(LOGO_PATH)
@@ -2514,7 +2544,6 @@ class MirlisMarkApp(QWidget):
         self.btn_align_left.blockSignals(True)
         self.btn_align_center.blockSignals(True)
         self.btn_align_right.blockSignals(True)
-        self.btn_align_justify.blockSignals(True)
         try:
             self.btn_bold.setChecked(fmt.fontWeight() >= QFont.Bold)
             self.btn_italic.setChecked(fmt.fontItalic())
@@ -2524,7 +2553,6 @@ class MirlisMarkApp(QWidget):
             self.btn_align_left.setChecked(align == Qt.AlignLeft)
             self.btn_align_center.setChecked(align == Qt.AlignHCenter)
             self.btn_align_right.setChecked(align == Qt.AlignRight)
-            self.btn_align_justify.setChecked(align == Qt.AlignJustify)
         finally:
             self.btn_bold.blockSignals(False)
             self.btn_italic.blockSignals(False)
@@ -2532,8 +2560,7 @@ class MirlisMarkApp(QWidget):
             self.btn_align_left.blockSignals(False)
             self.btn_align_center.blockSignals(False)
             self.btn_align_right.blockSignals(False)
-            self.btn_align_justify.blockSignals(False)
-
+    
         self._sync_font_size_from_cursor()
 
     def _sync_font_size_from_cursor(self):
@@ -2846,6 +2873,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 
