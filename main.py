@@ -2348,10 +2348,47 @@ class MirlisMarkApp(QWidget):
         self.made_input.clear()
         self.checked_input.clear()
 
+        # Сбрасываем только следы ручного редактирования,
+        # но НЕ навязываем единый размер шрифта всем форматам.
+        if hasattr(self, "preview"):
+            self.preview.clearFocus()
+            self.preview.clear()
+
+        if hasattr(self, "btn_bold"):
+            self.btn_bold.blockSignals(True)
+            self.btn_bold.setChecked(False)
+            self.btn_bold.blockSignals(False)
+
+        if hasattr(self, "btn_italic"):
+            self.btn_italic.blockSignals(True)
+            self.btn_italic.setChecked(False)
+            self.btn_italic.blockSignals(False)
+
+        if hasattr(self, "btn_underline"):
+            self.btn_underline.blockSignals(True)
+            self.btn_underline.setChecked(False)
+            self.btn_underline.blockSignals(False)
+
+        if hasattr(self, "btn_align_left"):
+            self.btn_align_left.blockSignals(True)
+            self.btn_align_left.setChecked(False)
+            self.btn_align_left.blockSignals(False)
+
+        if hasattr(self, "btn_align_center"):
+            self.btn_align_center.blockSignals(True)
+            self.btn_align_center.setChecked(False)
+            self.btn_align_center.blockSignals(False)
+
+        if hasattr(self, "btn_align_right"):
+            self.btn_align_right.blockSignals(True)
+            self.btn_align_right.setChecked(False)
+            self.btn_align_right.blockSignals(False)
+
         self._user_edited_preview = False
 
-        self.refresh_preview()
-
+        # Важно: после сброса пусть каждая этикетка заново
+        # применит СВОИ дефолтные автонастройки.
+        self.refresh_preview(force=True)
     # ---------------- Preview / validation ----------------
     def _unit_code_from_ui(self, unit_text):
         if unit_text == "кг":
@@ -2896,6 +2933,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
