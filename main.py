@@ -1382,16 +1382,6 @@ class MirlisMarkApp(QWidget):
         wrap_lay.addWidget(self.preview, 0, 0, 1, 3, Qt.AlignHCenter | Qt.AlignTop)
 
         # Кнопка справа, не влияет на центрирование этикетки
-        self.hide_weekday_btn = ToolBtn("Убрать\nдень недели")
-        self.hide_weekday_btn.setCheckable(True)
-        self.hide_weekday_btn.setChecked(False)
-        self.hide_weekday_btn.setMinimumSize(210, 88)
-        self.hide_weekday_btn.setMaximumWidth(210)
-        self.hide_weekday_btn.setStyleSheet(
-            "#ToolBtn { font-size: 18px; font-weight: 700; border-radius: 14px; padding: 12px 16px; }"
-        )
-        self.hide_weekday_btn.clicked.connect(self._on_hide_weekday_toggled)
-        wrap_lay.addWidget(self.hide_weekday_btn, 0, 2, Qt.AlignRight | Qt.AlignTop)
 
         right_layout.addWidget(self.preview_wrap, 1)
 
@@ -1633,95 +1623,7 @@ class MirlisMarkApp(QWidget):
         self.label_w_mm, self.label_h_mm = sizes.get(index, (58.0, 80.0))
         self._resize_label_preview()
 
-    def _get_current_weekday_text(self):
-        product_name = self.product_combo.currentText().strip()
-        product = self.get_product(product_name)
-        if not product:
-            return ""
 
-        unit_ui = self.unit_combo.currentText()
-        unit_code = self._unit_code_from_ui(unit_ui)
-        qty = self.qty_input.text().strip().replace(",", ".")
-        if unit_code is None or not qty:
-            return ""
-
-        try:
-            qty_float = float(qty)
-        except Exception:
-            return ""
-
-        made_by = self._made_value()
-        checked_by = self._checked_value()
-
-        produced_at = None
-        if getattr(self, "_preview_manual_mode", False):
-            d = self.manual_datetime_picker.date()
-            t = self.manual_datetime_picker.time_()
-            produced_at = datetime(d.year(), d.month(), d.day(), t.hour(), t.minute())
-
-        try:
-            label = build_label(
-                product_name=product["name"],
-                shelf_life_hours=product["shelf_life_hours"],
-                qty_value=str(qty_float).rstrip("0").rstrip("."),
-                unit=unit_code,
-                made_by=made_by,
-                checked_by=checked_by,
-                produced_at=produced_at,
-            )
-            return label.weekday
-        except Exception:
-            return ""
-
-    def _apply_weekday_block_format(self, hidden):
-        cursor = self.preview.textCursor()
-        cursor.movePosition(QTextCursor.Start)
-        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-
-        font_family = self.font_combo.currentFont().family()
-
-        fmt_weekday = QTextCharFormat()
-        fmt_weekday.setFontFamily(font_family)
-        fmt_weekday.setFontPointSize(26.0)
-        fmt_weekday.setFontWeight(QFont.Bold)
-        if hidden:
-            fmt_weekday.setForeground(QColor(0, 0, 0, 0))
-        else:
-            fmt_weekday.setForeground(QColor("#111827"))
-        cursor.mergeCharFormat(fmt_weekday)
-
-        block_fmt = QTextBlockFormat()
-        block_fmt.setAlignment(Qt.AlignHCenter)
-        cursor.mergeBlockFormat(block_fmt)
-
-        cursor.clearSelection()
-        self.preview.setTextCursor(cursor)
-
-    def _toggle_weekday_in_existing_preview(self):
-        if not self.preview.toPlainText().strip():
-            self.refresh_preview()
-            return
-
-        hidden = self.hide_weekday_btn.isChecked()
-        new_text = chr(160) if hidden else self._get_current_weekday_text()
-
-        if not new_text:
-            self.refresh_preview()
-            return
-
-        self._updating_preview = True
-        try:
-            self.preview.blockSignals(True)
-
-            cursor = self.preview.textCursor()
-            cursor.movePosition(QTextCursor.Start)
-            cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-            cursor.insertText(new_text)
-
-            self._apply_weekday_block_format(hidden)
-        finally:
-            self.preview.blockSignals(False)
-            self._updating_preview = False
     def _toggle_preview_manual_mode(self):
         self._preview_manual_mode = not self._preview_manual_mode
         on = self._preview_manual_mode
@@ -1732,12 +1634,6 @@ class MirlisMarkApp(QWidget):
         self._user_edited_preview = False
         self.refresh_preview()
 
-    def _on_hide_weekday_toggled(self):
-        """Переключение режима «без дня недели» должно работать даже если курсор стоит в предпросмотре."""
-        self.preview.clearFocus()
-        QApplication.processEvents()
-        self._user_edited_preview = False
-        self.refresh_preview(force=True)
     def _resolve_sheet_names(self, excel_path):
         """
         Проверяет, что в файле есть все 3 обязательных листа.
@@ -2810,8 +2706,6 @@ class MirlisMarkApp(QWidget):
             f"SIZE {w_mm} mm, {h_mm} mm\r\n"
             f"GAP {gap_mm} mm, 0 mm\r\n"
         ).encode("ascii")
-        if h_mm == 60:
-            header += b"GAPDETECT\r\n"
         header += (
             f"SPEED {speed}\r\n"
             f"DENSITY {density}\r\n"
@@ -2962,6 +2856,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 
