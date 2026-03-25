@@ -2391,14 +2391,31 @@ class MirlisMarkApp(QWidget):
             cursor.mergeCharFormat(fmt_base)
             cursor.clearSelection()
 
-            first_line = text.strip().split("\n")[0].strip()
-            if first_line in self._WEEKDAYS:
+            is_colored = hasattr(self, "label_size_combo") and self.label_size_combo.currentText() == "Цветные"
+            weekday_line_index = 1 if is_colored else 0
+
+            lines = text.split("\n")
+            weekday_line = ""
+            if len(lines) > weekday_line_index:
+                weekday_line = lines[weekday_line_index].strip()
+
+            if weekday_line in self._WEEKDAYS:
                 cursor.movePosition(QTextCursor.Start)
+
+                for _ in range(weekday_line_index):
+                    cursor.movePosition(QTextCursor.NextBlock)
+
+                cursor.movePosition(QTextCursor.StartOfBlock)
                 cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
 
                 fmt_weekday = QTextCharFormat()
                 fmt_weekday.setFontFamily(font_family)
-                fmt_weekday.setFontPointSize(26.0)
+
+                if is_colored:
+                    fmt_weekday.setFontPointSize(36.0)
+                else:
+                    fmt_weekday.setFontPointSize(26.0)
+
                 fmt_weekday.setFontWeight(QFont.Bold)
                 cursor.mergeCharFormat(fmt_weekday)
 
@@ -2473,11 +2490,15 @@ class MirlisMarkApp(QWidget):
         )
 
         text_parts = []
-        text_parts.append(f"{label.weekday}")
+        is_colored = hasattr(self, "label_size_combo") and self.label_size_combo.currentText() == "Цветные"
 
-        if hasattr(self, "label_size_combo") and self.label_size_combo.currentText() == "Цветные":
+        if is_colored:
             text_parts.append("")
             text_parts.append("")
+            text_parts.append("")
+            text_parts.append("")
+        else:
+            text_parts.append(f"{label.weekday}")
 
         text_parts.append(f"Продукт: {label.product_name}")
         text_parts.append(f"Вес/шт: {label.qty_value} {label.qty_unit_ru}")
@@ -2875,6 +2896,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
