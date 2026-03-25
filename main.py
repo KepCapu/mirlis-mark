@@ -1624,6 +1624,11 @@ class MirlisMarkApp(QWidget):
         self.label_w_mm, self.label_h_mm = sizes.get(index, (58.0, 80.0))
         self._resize_label_preview()
 
+        self._user_edited_preview = False
+        text, can_print = self._build_label_plain_text()
+        self.print_btn.setEnabled(can_print)
+        self._set_preview_text_programmatically(text)
+        QApplication.processEvents()
 
     def _toggle_preview_manual_mode(self):
         self._preview_manual_mode = not self._preview_manual_mode
@@ -2859,6 +2864,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
 
 
 
