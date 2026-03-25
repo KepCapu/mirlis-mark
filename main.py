@@ -1603,22 +1603,33 @@ class MirlisMarkApp(QWidget):
     def _resize_label_preview(self):
         if not hasattr(self, "preview_wrap"):
             return
+
         rect = self.preview_wrap.contentsRect()
         avail_w = rect.width()
         avail_h = rect.height()
         if avail_w < 50 or avail_h < 50:
             return
 
-        h_mm = getattr(self, "label_h_mm", 80)
-        target_w = min(avail_w, int(avail_h * self.label_w_mm / h_mm)) - 10
-        target_w = max(350, target_w)
-        target_h = int(target_w * h_mm / self.label_w_mm)
+        # Общая система масштаба для всех форматов:
+        # сравниваем реальные размеры этикеток относительно максимального формата.
+        max_w_mm = 70.0
+        max_h_mm = 80.0
 
-        target_w = min(target_w, 520)
-        target_h = min(target_h, int(520 * h_mm / self.label_w_mm))
+        margin_w = 28
+        margin_h = 28
 
-        self.preview.setFixedSize(int(target_w), int(target_h))
+        px_per_mm = min(
+            (avail_w - margin_w) / max_w_mm,
+            (avail_h - margin_h) / max_h_mm
+        )
 
+        target_w = int(round(self.label_w_mm * px_per_mm))
+        target_h = int(round(self.label_h_mm * px_per_mm))
+
+        target_w = max(260, target_w)
+        target_h = max(260, target_h)
+
+        self.preview.setFixedSize(target_w, target_h)
     def _on_label_size_changed(self, index):
         sizes = {0: (58.0, 80.0), 1: (58.0, 60.0), 2: (70.0, 70.0), 3: (70.0, 70.0)}
         self.label_w_mm, self.label_h_mm = sizes.get(index, (58.0, 80.0))
@@ -2864,6 +2875,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
