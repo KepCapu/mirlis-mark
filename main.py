@@ -1399,6 +1399,7 @@ class MirlisMarkApp(QWidget):
         self.label_size_combo.addItem("58×80 мм")
         self.label_size_combo.addItem("58×60 мм")
         self.label_size_combo.addItem("70×70 мм")
+        self.label_size_combo.addItem("Цветные")
         self.label_size_combo.setCurrentIndex(0)
         self.label_size_combo.setMinimumWidth(140)
         label_size_row.addWidget(label_size_lab)
@@ -1619,7 +1620,7 @@ class MirlisMarkApp(QWidget):
         self.preview.setFixedSize(int(target_w), int(target_h))
 
     def _on_label_size_changed(self, index):
-        sizes = {0: (58.0, 80.0), 1: (58.0, 60.0), 2: (70.0, 70.0)}
+        sizes = {0: (58.0, 80.0), 1: (58.0, 60.0), 2: (70.0, 70.0), 3: (70.0, 70.0)}
         self.label_w_mm, self.label_h_mm = sizes.get(index, (58.0, 80.0))
         self._resize_label_preview()
 
@@ -2456,10 +2457,12 @@ class MirlisMarkApp(QWidget):
         )
 
         text_parts = []
-        if not getattr(self, "hide_weekday_btn", None) or not self.hide_weekday_btn.isChecked():
-            text_parts.append(f"{label.weekday}")
-        else:
-            text_parts.append(chr(160))  # невидимый заполнитель сохраняет высоту первой строки
+        text_parts.append(f"{label.weekday}")
+
+        if hasattr(self, "label_size_combo") and self.label_size_combo.currentText() == "Цветные":
+            text_parts.append("")
+            text_parts.append("")
+
         text_parts.append(f"Продукт: {label.product_name}")
         text_parts.append(f"Вес/шт: {label.qty_value} {label.qty_unit_ru}")
         text_parts.append(f"Дата/время: {format_dt(label.produced_at)}")
@@ -2856,6 +2859,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 
