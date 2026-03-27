@@ -1,4 +1,4 @@
-﻿# main.py
+# main.py
 # Mirlis Mark — Система маркировки
 # UI: "как на картинке" + редактор предпросмотра + ВИДИМЫЕ стрелочки в выпадающих списках
 #
@@ -754,6 +754,14 @@ class MirlisMarkApp(QWidget):
         self.timer.timeout.connect(self.refresh_preview)
         self.timer.start(5000)
 
+        # автообновление Excel раз в минуту (без всплывающих окон при фоновых ошибках)
+        self._excel_autorefresh_timer = QTimer(self)
+        self._excel_autorefresh_timer.timeout.connect(self._on_excel_autorefresh_tick)
+        self._excel_autorefresh_timer.start(60_000)
+
+        # архив напечатанных этикеток: очистка старше 31 дня при старте
+        self._cleanup_old_label_archives(days=31)
+
         self.refresh_preview()
 
     # ---------------- STYLE ----------------
@@ -1068,6 +1076,15 @@ class MirlisMarkApp(QWidget):
             """
         _qss = _qss.replace("url(assets/combo-btn.svg)", f"url({combo_btn_path})")
         self.setStyleSheet(_qss)
+
+    # ---------------- Auto Excel refresh ----------------
+    def _on_excel_autorefresh_tick(self):
+        """Фоновое обновление Excel раз в минуту без MessageBox."""
+        try:
+            self.reload_excel(show_message=False, silent_errors=True)
+        except TypeError:
+            # на случай если сигнатура reload_excel не содержит silent_errors
+            self.reload_excel(show_message=False)
 
     # ---------------- UI ----------------
     def init_ui(self):
@@ -1651,7 +1668,7 @@ class MirlisMarkApp(QWidget):
         self._user_edited_preview = False
         self.refresh_preview()
 
-    def _resolve_sheet_names(self, excel_path):
+    def _resolve_sheet_names(self, excel_path, silent: bool = False):
         """
         Проверяет, что в файле есть все 3 обязательных листа.
         Возвращает (sheet_products, sheet_made, sheet_checked) или None если файл не подходит.
@@ -1675,26 +1692,27 @@ class MirlisMarkApp(QWidget):
 
         if missing:
             available_str = ", ".join([f"«{s}»" for s in available]) if available else "(пусто)"
-            QMessageBox.warning(
-                self,
-                "Неподходящий файл",
-                f"В выбранном файле отсутствуют обязательные листы:\n"
-                f"{', '.join(missing)}\n\n"
-                f"Листы в файле: {available_str}\n\n"
-                f"Файл Excel должен содержать 3 листа:\n\n"
-                f"1. «{SHEET_PRODUCTS}» — список продукции\n"
-                f"   Заголовки: Код | Наименование | Срок годности (ч) | Ед. измер. | Активен\n\n"
-                f"2. «{SHEET_MADE}» — сотрудники\n"
-                f"   Заголовки: ФИО | Активен\n\n"
-                f"3. «{SHEET_CHECKED}» — цехи\n"
-                f"   Заголовки: Цех | Активен\n\n"
-                f"Первая строка каждого листа — заголовки, данные со второй строки.",
-            )
+            if not silent:
+                QMessageBox.warning(
+                    self,
+                    "Неподходящий файл",
+                    f"В выбранном файле отсутствуют обязательные листы:\n"
+                    f"{', '.join(missing)}\n\n"
+                    f"Листы в файле: {available_str}\n\n"
+                    f"Файл Excel должен содержать 3 листа:\n\n"
+                    f"1. «{SHEET_PRODUCTS}» — список продукции\n"
+                    f"   Заголовки: Код | Наименование | Срок годности (ч) | Ед. измер. | Активен\n\n"
+                    f"2. «{SHEET_MADE}» — сотрудники\n"
+                    f"   Заголовки: ФИО | Активен\n\n"
+                    f"3. «{SHEET_CHECKED}» — цехи\n"
+                    f"   Заголовки: Цех | Активен\n\n"
+                    f"Первая строка каждого листа — заголовки, данные со второй строки.",
+                )
             return None
 
         return (sheet_products, sheet_made, sheet_checked)
 
-    def reload_excel(self, show_message=True):
+    def reload_excel(self, show_message=True, silent_errors: bool = False):
         try:
             current_product = self.product_combo.currentText().strip()
             current_unit = self.unit_combo.currentText()
@@ -1708,7 +1726,7 @@ class MirlisMarkApp(QWidget):
             checked_combo = self.checked_combo.currentText()
 
             # определяем имена листов
-            resolved = self._resolve_sheet_names(self.excel_path)
+            resolved = self._resolve_sheet_names(self.excel_path, silent=silent_errors)
             if resolved is None:
                 # пользователь отменил выбор листов
                 return
@@ -1773,10 +1791,13 @@ class MirlisMarkApp(QWidget):
                 self.unit_combo.clear()
                 self.unit_combo.addItem("")
 
-            if show_message:
+            if show_message and not silent_errors:
                 QMessageBox.information(self, "Готово", "Excel обновлён.")
 
         except Exception as e:
+            if silent_errors:
+                sys.stderr.write(f"[MirlisMark] Excel auto-refresh error: {e}\n")
+                return
             QMessageBox.critical(
                 self,
                 "Ошибка Excel",
@@ -2873,6 +2894,10 @@ class MirlisMarkApp(QWidget):
                 "batch": "",
             }
         self.last_history_entry = entry
+        try:
+            self._archive_printed_label(preview_text=preview_text, entry=entry, copies=copies)
+        except Exception as e:
+            sys.stderr.write(f"[MirlisMark] Archive save error: {e}\n")
         self._append_history_entry(entry)
 
     def repeat_last_print(self):
@@ -2889,9 +2914,84 @@ class MirlisMarkApp(QWidget):
                 e = dict(self.last_history_entry)
                 e["id"] = time.time_ns()
                 e["ts"] = time.time()
+                try:
+                    self._archive_printed_label(preview_text=e.get("preview_text", ""), entry=e, copies=copies)
+                except Exception as arch_e:
+                    sys.stderr.write(f"[MirlisMark] Archive save error: {arch_e}\n")
                 self._append_history_entry(e)
         except Exception as e:
             QMessageBox.warning(self, "Повтор", f"Не удалось повторить печать:\n{e}")
+
+    # ---------------- Printed labels archive ----------------
+    def _labels_archive_root(self) -> str:
+        return os.path.join(app_data_dir(), "Готовые этикетки")
+
+    def _labels_archive_day_dir(self) -> str:
+        day = datetime.now().strftime("%d.%m.%Y")
+        return os.path.join(self._labels_archive_root(), day)
+
+    def _sanitize_filename_part(self, s: str) -> str:
+        s = (s or "").strip()
+        if not s:
+            return "—"
+        for ch in ['<', '>', ':', '"', '/', '\\', '|', '?', '*']:
+            s = s.replace(ch, "_")
+        s = s.replace("\n", " ").replace("\r", " ").strip()
+        while "  " in s:
+            s = s.replace("  ", " ")
+        return s[:120].strip() or "—"
+
+    def _cleanup_old_label_archives(self, days: int = 31):
+        root = self._labels_archive_root()
+        try:
+            if not os.path.isdir(root):
+                return
+            today = datetime.now().date()
+            for name in os.listdir(root):
+                p = os.path.join(root, name)
+                if not os.path.isdir(p):
+                    continue
+                try:
+                    d = datetime.strptime(name.strip(), "%d.%m.%Y").date()
+                except Exception:
+                    continue
+                age_days = (today - d).days
+                if age_days >= days:
+                    shutil.rmtree(p, ignore_errors=True)
+        except Exception as e:
+            sys.stderr.write(f"[MirlisMark] Archive cleanup error: {e}\n")
+
+    def _archive_printed_label(self, preview_text: str, entry: dict | None, copies: int):
+        # очистка старых папок — при каждом сохранении
+        self._cleanup_old_label_archives(days=31)
+
+        e = entry or {}
+        product = self._sanitize_filename_part(e.get("product") or e.get("product_name") or "Этикетка")
+        weight = self._sanitize_filename_part((e.get("qty") or "").replace(" ", "") or "—")
+        batch = self._sanitize_filename_part(e.get("batch") or "—")
+
+        base_name = f"{product}_{weight}_{batch}"
+        day_dir = self._labels_archive_day_dir()
+        os.makedirs(day_dir, exist_ok=True)
+
+        content = (preview_text or "").rstrip()
+        try:
+            copies_int = int(copies)
+        except Exception:
+            copies_int = 1
+        content = f"{content}\nКоличество: {copies_int}"
+
+        n = 1
+        while True:
+            suffix = "" if n == 1 else f"_{n}"
+            fname = f"{base_name}{suffix}.txt"
+            fpath = os.path.join(day_dir, fname)
+            if not os.path.exists(fpath):
+                break
+            n += 1
+
+        with open(fpath, "w", encoding="utf-8") as f:
+            f.write(content + "\n")
 
 
 def main():
