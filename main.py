@@ -351,6 +351,7 @@ class CustomDateTimePicker(QWidget):
         self._date = QDate.currentDate()
         self._time = QTime.currentTime()
         self._popup_visible = False
+        self._cal_view = "day"  # day | month | year
 
         # --- триггер как у QComboBox ---
         combo_btn_path = resource_path("assets/combo-btn.svg").replace("\\", "/")
@@ -423,11 +424,14 @@ class CustomDateTimePicker(QWidget):
         )
         self._prev_btn.clicked.connect(lambda: self._change_month(-1))
 
-        self._month_label = QLabel()
-        self._month_label.setAlignment(Qt.AlignCenter)
-        self._month_label.setStyleSheet(
-            "font-size: 16px; font-weight: 700; color: #111827; background: transparent;"
+        self._month_btn = QPushButton()
+        self._month_btn.setCursor(Qt.PointingHandCursor)
+        self._month_btn.setFlat(True)
+        self._month_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; font-size: 16px; font-weight: 700; color: #111827; }"
+            "QPushButton:hover { color: #0f172a; }"
         )
+        self._month_btn.clicked.connect(self._on_month_label_clicked)
 
         self._next_btn = QPushButton("›")
         self._next_btn.setFixedSize(36, 36)
@@ -439,7 +443,7 @@ class CustomDateTimePicker(QWidget):
         self._next_btn.clicked.connect(lambda: self._change_month(1))
 
         nav.addWidget(self._prev_btn)
-        nav.addWidget(self._month_label, 1)
+        nav.addWidget(self._month_btn, 1)
         nav.addWidget(self._next_btn)
         popup_lay.addLayout(nav)
 
@@ -449,12 +453,19 @@ class CustomDateTimePicker(QWidget):
         sep.setStyleSheet("color: #e2e8f0; background: #e2e8f0; border: none; max-height: 1px;")
         popup_lay.addWidget(sep)
 
-        # --- сетка дней ---
-        self._cal_grid = QGridLayout()
+        # --- календарь: 3 режима (day/month/year) ---
+        self._cal_container = QWidget()
+        cal_wrap = QVBoxLayout(self._cal_container)
+        cal_wrap.setContentsMargins(0, 0, 0, 0)
+        cal_wrap.setSpacing(0)
+
+        # day page
+        self._day_page = QWidget()
+        self._cal_grid = QGridLayout(self._day_page)
         self._cal_grid.setSpacing(2)
+        self._cal_grid.setContentsMargins(0, 0, 0, 0)
         for c in range(7):
             self._cal_grid.setColumnMinimumWidth(c, 56)
-        # заголовки
         for col, name in enumerate(_WEEKDAY_HEADERS):
             lbl = QLabel(name)
             lbl.setAlignment(Qt.AlignCenter)
@@ -464,7 +475,23 @@ class CustomDateTimePicker(QWidget):
                 "background: transparent; padding: 4px 0;"
             )
             self._cal_grid.addWidget(lbl, 0, col)
-        popup_lay.addLayout(self._cal_grid)
+
+        # month page
+        self._month_page = QWidget()
+        self._month_grid = QGridLayout(self._month_page)
+        self._month_grid.setSpacing(6)
+        self._month_grid.setContentsMargins(0, 6, 0, 0)
+
+        # year page
+        self._year_page = QWidget()
+        self._year_grid = QGridLayout(self._year_page)
+        self._year_grid.setSpacing(6)
+        self._year_grid.setContentsMargins(0, 6, 0, 0)
+
+        cal_wrap.addWidget(self._day_page)
+        cal_wrap.addWidget(self._month_page)
+        cal_wrap.addWidget(self._year_page)
+        popup_lay.addWidget(self._cal_container)
 
         # --- разделитель ---
         sep2 = QFrame()
@@ -560,14 +587,131 @@ class CustomDateTimePicker(QWidget):
         self._refresh_time_labels()
 
     # ---------- calendar grid ----------
+    def _on_month_label_clicked(self):
+        # day -> month -> year (циклический переход по клику на заголовок)
+        if getattr(self, "_cal_view", "day") == "day":
+            self._cal_view = "month"
+            self._day_page.setVisible(False)
+            self._month_page.setVisible(True)
+            self._year_page.setVisible(False)
+            self._refresh_month_grid()
+            return
+
+        if self._cal_view == "month":
+            self._cal_view = "year"
+            self._day_page.setVisible(False)
+            self._month_page.setVisible(False)
+            self._year_page.setVisible(True)
+            self._refresh_year_grid()
+            return
+
+        # если уже year — остаёмся в year (без неожиданного сброса)
+        self._cal_view = "year"
+        self._day_page.setVisible(False)
+        self._month_page.setVisible(False)
+        self._year_page.setVisible(True)
+        self._refresh_year_grid()
+
+    def _refresh_month_grid(self):
+        # очистка
+        while self._month_grid.count():
+            it = self._month_grid.takeAt(0)
+            w = it.widget()
+            if w:
+                w.deleteLater()
+
+        # 12 месяцев (3x4)
+        current_m = self._date.month()
+        for idx in range(1, 13):
+            r = (idx - 1) // 4
+            c = (idx - 1) % 4
+            btn = QPushButton(_MONTH_NAMES_RU[idx])
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedSize(132, 38)
+            if idx == current_m:
+                btn.setStyleSheet(
+                    "QPushButton { background: #f9b233; color: #ffffff; border: none; border-radius: 10px; "
+                    "font-size: 14px; font-weight: 700; }"
+                    "QPushButton:hover { background: #e5a020; }"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background: transparent; border: 1px solid #e2e8f0; border-radius: 10px; "
+                    "font-size: 14px; color: #374151; }"
+                    "QPushButton:hover { background: #f1f5f9; }"
+                )
+            btn.clicked.connect(lambda checked, m=idx: self._select_month(m))
+            self._month_grid.addWidget(btn, r, c)
+
+    def _select_month(self, month: int):
+        y = self._date.year()
+        max_day = calendar.monthrange(y, month)[1]
+        d = min(self._date.day(), max_day)
+        self._date = QDate(y, month, d)
+        self._cal_view = "day"
+        self._refresh_calendar()
+        self._update_btn_text()
+        self.dateTimeChanged.emit()
+
+    def _refresh_year_grid(self):
+        while self._year_grid.count():
+            it = self._year_grid.takeAt(0)
+            w = it.widget()
+            if w:
+                w.deleteLater()
+
+        cur_y = self._date.year()
+        start_y = cur_y - 7
+        years = [start_y + i for i in range(16)]  # 4x4
+        for i, y in enumerate(years):
+            r = i // 4
+            c = i % 4
+            btn = QPushButton(str(y))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedSize(132, 38)
+            if y == cur_y:
+                btn.setStyleSheet(
+                    "QPushButton { background: #f9b233; color: #ffffff; border: none; border-radius: 10px; "
+                    "font-size: 14px; font-weight: 700; }"
+                    "QPushButton:hover { background: #e5a020; }"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background: transparent; border: 1px solid #e2e8f0; border-radius: 10px; "
+                    "font-size: 14px; color: #374151; }"
+                    "QPushButton:hover { background: #f1f5f9; }"
+                )
+            btn.clicked.connect(lambda checked, yy=y: self._select_year(yy))
+            self._year_grid.addWidget(btn, r, c)
+
+    def _select_year(self, year: int):
+        m = self._date.month()
+        max_day = calendar.monthrange(year, m)[1]
+        d = min(self._date.day(), max_day)
+        self._date = QDate(year, m, d)
+        self._cal_view = "month"
+        self._day_page.setVisible(False)
+        self._month_page.setVisible(True)
+        self._year_page.setVisible(False)
+        self._refresh_month_grid()
+        self._month_btn.setText(f"{_MONTH_NAMES_RU[self._date.month()]} {self._date.year()} ▾")
+        self._update_btn_text()
+        self.dateTimeChanged.emit()
+
     def _refresh_calendar(self):
+        # всегда возвращаемся к выбору дней
+        self._cal_view = "day"
+        self._day_page.setVisible(True)
+        self._month_page.setVisible(False)
+        self._year_page.setVisible(False)
+
         for r in range(7, 0, -1):
             for c in range(7):
                 item = self._cal_grid.itemAtPosition(r, c)
                 if item and item.widget():
                     item.widget().deleteLater()
 
-        self._month_label.setText(f"{_MONTH_NAMES_RU[self._date.month()]} {self._date.year()}")
+        self._month_btn.setText(f"{_MONTH_NAMES_RU[self._date.month()]} {self._date.year()} ▾")
 
         year = self._date.year()
         month = self._date.month()
@@ -621,7 +765,22 @@ class CustomDateTimePicker(QWidget):
         max_day = calendar.monthrange(y, m)[1]
         d = min(self._date.day(), max_day)
         self._date = QDate(y, m, d)
-        self._refresh_calendar()
+
+        if getattr(self, "_cal_view", "day") == "day":
+            self._refresh_calendar()
+        elif self._cal_view == "month":
+            self._day_page.setVisible(False)
+            self._month_page.setVisible(True)
+            self._year_page.setVisible(False)
+            self._month_btn.setText(f"{_MONTH_NAMES_RU[self._date.month()]} {self._date.year()} ▾")
+            self._refresh_month_grid()
+        else:  # year
+            self._day_page.setVisible(False)
+            self._month_page.setVisible(False)
+            self._year_page.setVisible(True)
+            self._month_btn.setText(f"{_MONTH_NAMES_RU[self._date.month()]} {self._date.year()} ▾")
+            self._refresh_year_grid()
+
         self._update_btn_text()
         self.dateTimeChanged.emit()
 
