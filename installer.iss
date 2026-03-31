@@ -32,7 +32,8 @@ Name: "desktopicon"; Description: "Create desktop shortcut";
 
 
 [Files]
-Source: "dist\MirlisMark.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\MirlisMark\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "data_sources\products.xlsx"; DestDir: "{app}\data_sources"; Flags: ignoreversion
 
 
 [Icons]
