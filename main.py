@@ -738,6 +738,7 @@ class MirlisMarkApp(QWidget):
         self._user_edited_preview = False
         self._preview_manual_mode = False
         self._base_font_size = 20
+        self._preview_scale = 1.0
 
         self.history_entries = []
         self._history_filter_text = ""
@@ -1646,6 +1647,12 @@ class MirlisMarkApp(QWidget):
         target_w = max(260, target_w)
         target_h = max(260, target_h)
 
+        # Локальный масштаб только для preview (не влияет на печать).
+        # Делаем шрифт чуть меньше на небольших экранах, пропорционально размеру preview.
+        preview_ref_w = 450.0
+        scale = float(target_w) / preview_ref_w if preview_ref_w > 0 else 1.0
+        self._preview_scale = max(0.65, min(1.0, scale))
+
         self.preview.setFixedSize(target_w, target_h)
     def _on_label_size_changed(self, index):
         sizes = {0: (58.0, 80.0), 1: (58.0, 60.0), 2: (70.0, 70.0), 3: (70.0, 70.0)}
@@ -2439,12 +2446,14 @@ class MirlisMarkApp(QWidget):
             self.preview.setPlainText(text)
 
             font_family = self.font_combo.currentFont().family()
+            preview_scale = getattr(self, "_preview_scale", 1.0) or 1.0
+            effective_base_font = float(self._base_font_size) * float(preview_scale)
             cursor = self.preview.textCursor()
 
             cursor.select(QTextCursor.Document)
             fmt_base = QTextCharFormat()
             fmt_base.setFontFamily(font_family)
-            fmt_base.setFontPointSize(float(self._base_font_size))
+            fmt_base.setFontPointSize(effective_base_font)
             fmt_base.setFontWeight(QFont.Normal)
             cursor.mergeCharFormat(fmt_base)
             cursor.clearSelection()
@@ -2470,9 +2479,9 @@ class MirlisMarkApp(QWidget):
                 fmt_weekday.setFontFamily(font_family)
 
                 if is_colored:
-                    fmt_weekday.setFontPointSize(36.0)
+                    fmt_weekday.setFontPointSize(max(8.0, effective_base_font * 1.8))
                 else:
-                    fmt_weekday.setFontPointSize(26.0)
+                    fmt_weekday.setFontPointSize(max(8.0, effective_base_font * 1.3))
 
                 fmt_weekday.setFontWeight(QFont.Bold)
                 cursor.mergeCharFormat(fmt_weekday)
