@@ -49,8 +49,11 @@ from PyQt5.QtWidgets import (
     QCalendarWidget,
     QGridLayout,
     QDialog,
+    QListView,
+    QStyledItemDelegate,
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF
+from PyQt5.QtCore import QObject
 from PyQt5.QtCore import QStringListModel
 from PyQt5.QtGui import (
     QDesktopServices,
@@ -860,10 +863,61 @@ class CustomDateTimePicker(QWidget):
         self._update_btn_text()
 
 
+# -------------------- START MODE SELECT --------------------
+class ModeSelectDialog(QDialog):
+    """Стартовый выбор режима приложения (pc/tablet)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.selected_mode = None
+
+        self.setWindowTitle("Выберите режим")
+        self.setModal(True)
+        self.setFixedSize(360, 190)
+        self.setStyleSheet(
+            "QDialog { background: #ffffff; }"
+            "QLabel { color: #111827; }"
+            "QPushButton { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; "
+            "padding: 10px 14px; font-size: 15px; font-weight: 700; color: #111827; }"
+            "QPushButton:hover { background: #f1f5f9; }"
+            "QPushButton:pressed { background: #e2e8f0; }"
+        )
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(12)
+
+        title = QLabel("Выберите режим")
+        title.setStyleSheet("font-size: 18px; font-weight: 800;")
+        subtitle = QLabel("Как открыть приложение?")
+        subtitle.setStyleSheet("font-size: 13px; color: #64748b;")
+        lay.addWidget(title)
+        lay.addWidget(subtitle)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        self._btn_pc = QPushButton("Версия ПК")
+        self._btn_tablet = QPushButton("Версия планшет")
+        self._btn_pc.setCursor(Qt.PointingHandCursor)
+        self._btn_tablet.setCursor(Qt.PointingHandCursor)
+        self._btn_pc.clicked.connect(lambda: self._select("pc"))
+        self._btn_tablet.clicked.connect(lambda: self._select("tablet"))
+        btn_row.addWidget(self._btn_pc)
+        btn_row.addWidget(self._btn_tablet)
+        lay.addLayout(btn_row)
+
+        lay.addStretch(1)
+
+    def _select(self, mode: str):
+        self.selected_mode = mode
+        self.accept()
+
+
 # -------------------- MAIN APP --------------------
 class MirlisMarkApp(QWidget):
-    def __init__(self):
+    def __init__(self, app_mode="pc"):
         super().__init__()
+        self.app_mode = app_mode
         self.setWindowIcon(QIcon(resource_path("assets/mark_app.ico")))
         self.setWindowTitle(APP_TITLE)
 
@@ -1725,7 +1779,304 @@ class MirlisMarkApp(QWidget):
         for cb in (self.product_combo, self.unit_combo, self.made_combo, self.checked_combo, self.font_combo, self.label_size_combo):
             cb.setObjectName("ComboWithArrow")
 
+        if getattr(self, "app_mode", "pc") == "tablet":
+            self._apply_tablet_combobox_popups()
+            self._apply_tablet_ui_tweaks()
+
         self._rebuild_history_view()
+
+    def _apply_tablet_combobox_popups(self):
+        """
+        Tablet-only: делаем выпадающие списки QComboBox удобными для тач-ввода.
+        Важно: влияет только на popup/list view, не увеличивает весь UI целиком.
+        """
+        class _TabletComboItemDelegate(QStyledItemDelegate):
+            def __init__(self, parent=None, min_h: int = 54):
+                super().__init__(parent)
+                self._min_h = int(min_h)
+
+            def sizeHint(self, option, index):
+                s = super().sizeHint(option, index)
+                return QSize(s.width(), max(int(s.height()), self._min_h))
+
+        def _rows_for_combo(combo: QComboBox) -> int:
+            # Требуемые лимиты (tablet-only)
+            if hasattr(self, "product_combo") and combo is self.product_combo:
+                return 8
+            if hasattr(self, "made_combo") and combo is self.made_combo:
+                return 3
+            if hasattr(self, "checked_combo") and combo is self.checked_combo:
+                return 3
+            if hasattr(self, "font_size_combo") and combo is self.font_size_combo:
+                return 6
+            if hasattr(self, "font_combo") and combo is self.font_combo:
+                return 8
+            if hasattr(self, "label_size_combo") and combo is self.label_size_combo:
+                return 4
+            if hasattr(self, "unit_combo") and combo is self.unit_combo:
+                return 2
+            return 8
+
+        def _popup_width_mult(combo: QComboBox) -> float:
+            if hasattr(self, "font_size_combo") and combo is self.font_size_combo:
+                return 1.5
+            return 1.0
+
+        def _apply_popup_geometry(combo: QComboBox, view: QListView):
+            # Важно: с кастомным view Qt/PyQt5 не всегда ограничивает высоту popup сам.
+            # Поэтому делаем 2 уровня: setMaxVisibleItems + ручная фиксация высоты view на Show.
+            limit = int(_rows_for_combo(combo))
+            count = int(combo.count())
+            visible_rows = max(1, min(count, limit))
+
+            row_h = 0
+            try:
+                if count > 0:
+                    row_h = int(view.sizeHintForRow(0) or 0)
+            except Exception:
+                row_h = 0
+            if row_h <= 0:
+                row_h = 54  # fallback tablet
+
+            try:
+                spacing = int(view.spacing() or 0)
+            except Exception:
+                spacing = 0
+
+            try:
+                frame = int(view.frameWidth() or 0) * 2
+            except Exception:
+                frame = 0
+
+            total_height = visible_rows * row_h + max(0, visible_rows - 1) * spacing + frame + 12
+            if combo is self.product_combo:
+                total_height = int(total_height * 0.5)
+            if combo is self.made_combo:
+                total_height = max(1, int(total_height) - 12)
+            if hasattr(self, "font_combo") and combo is self.font_combo:
+                total_height = int(total_height * 0.7)
+            if hasattr(self, "label_size_combo") and combo is self.label_size_combo:
+                total_height = int(total_height * 0.7)
+            view.setFixedHeight(int(total_height))
+
+            # product_combo / font_combo: ограничить и внешний popup (иначе остаётся «лишняя» высота)
+            popup = view.window()
+            if popup is not None and combo is self.product_combo:
+                popup.setFixedHeight(int(total_height + 4))
+            if popup is not None and hasattr(self, "font_combo") and combo is self.font_combo:
+                popup.setFixedHeight(int(total_height + 4))
+            if popup is not None and hasattr(self, "label_size_combo") and combo is self.label_size_combo:
+                popup.setFixedHeight(int(total_height + 4))
+
+            base_w = combo.width() if combo.width() > 0 else combo.sizeHint().width()
+            view.setMinimumWidth(int(base_w * float(_popup_width_mult(combo))))
+
+        class _TabletPopupSizer(QObject):
+            def __init__(self, combo: QComboBox, view: QListView):
+                super().__init__(view)
+                self._combo = combo
+                self._view = view
+
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Show:
+                    try:
+                        _apply_popup_geometry(self._combo, self._view)
+                    except Exception:
+                        pass
+                return False
+
+        class _TabletComboPreShow(QObject):
+            """made_combo / checked_combo / font_combo / unit_combo: геометрия до первого show (QEvent.Show у popup — поздно)."""
+
+            def __init__(self, apply_fn, combo: QComboBox, view: QListView):
+                super().__init__(combo)
+                self._apply_fn = apply_fn
+                self._combo = combo
+                self._view = view
+
+            def eventFilter(self, obj, event):
+                et = event.type()
+                if et in (QEvent.MouseButtonPress, QEvent.TouchBegin):
+                    try:
+                        self._apply_fn(self._combo, self._view)
+                    except Exception:
+                        pass
+                return False
+
+        qss = """
+            QAbstractItemView {
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 14px;
+                outline: none;
+                padding: 10px 6px;
+                margin: 4px 0 0 0;
+            }
+
+            QAbstractItemView::item {
+                min-height: 54px;
+                padding: 12px 18px;
+                border-radius: 10px;
+                font-size: 17px;
+            }
+
+            QAbstractItemView::item:hover {
+                background: #f1f5f9;
+            }
+
+            QAbstractItemView::item:selected {
+                background: #eef2ff;
+                color: #3730a3;
+            }
+        """
+
+        for combo in self.findChildren(QComboBox):
+            try:
+                limit = int(_rows_for_combo(combo))
+                # Главный механизм ограничения высоты popup (tablet-only) — стандартный Qt.
+                combo.setMaxVisibleItems(limit)
+
+                # закрытый комбобокс — чуть выше и шире зона стрелки (tablet-only)
+                combo.setMinimumHeight(44)
+                combo.setStyleSheet(
+                    "QComboBox { min-height: 44px; padding: 6px 12px; }"
+                    "QComboBox::drop-down { width: 44px; }"
+                )
+                if combo is self.font_size_combo:
+                    combo.setStyleSheet(
+                        "QComboBox { min-height: 44px; padding-top: 6px; padding-bottom: 6px; "
+                        "padding-left: 16px; padding-right: 12px; }"
+                        "QComboBox::drop-down { width: 44px; }"
+                    )
+
+                # popup — свой QListView с принудительной высотой элементов
+                lv = QListView()
+                lv.setUniformItemSizes(True)
+                lv.setSpacing(6)
+                lv.setStyleSheet(qss)
+                lv.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                lv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+                f = lv.font()
+                f.setPointSize(max(f.pointSize(), 12))
+                lv.setFont(f)
+
+                lv.setItemDelegate(_TabletComboItemDelegate(lv, min_h=54))
+                combo.setView(lv)
+
+                if (
+                    combo is self.made_combo
+                    or combo is self.checked_combo
+                    or combo is self.font_combo
+                    or combo is self.unit_combo
+                ):
+                    if not hasattr(self, "_tablet_combo_preshow_filters"):
+                        self._tablet_combo_preshow_filters = []
+                    pre = _TabletComboPreShow(_apply_popup_geometry, combo, lv)
+                    combo.installEventFilter(pre)
+                    self._tablet_combo_preshow_filters.append(pre)
+
+                # Подстрахуем высоту строки через gridSize (некоторые стили игнорируют min-height).
+                try:
+                    row_h = 54
+                    lv.setGridSize(QSize(0, row_h))
+                except Exception:
+                    pass
+
+                # Строго ограничиваем popup по числу видимых строк именно на показе popup
+                # (важно: списки могут заполняться/обновляться после init_ui).
+                try:
+                    popup = lv.window()
+                    if popup is not None:
+                        if not hasattr(self, "_tablet_combo_popup_sizers"):
+                            self._tablet_combo_popup_sizers = []
+                        sizer = _TabletPopupSizer(combo, lv)
+                        popup.installEventFilter(sizer)
+                        self._tablet_combo_popup_sizers.append(sizer)
+                        _apply_popup_geometry(combo, lv)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+    def _apply_tablet_ui_tweaks(self):
+        """Tablet-only: точечные правки размеров кнопок без перестройки layout."""
+        # font_size_combo: шире закрытое поле (было 90), чтобы 20/22/24 не обрезались у стрелки
+        try:
+            if hasattr(self, "font_size_combo"):
+                self.font_size_combo.setFixedWidth(108)
+        except Exception:
+            pass
+
+        # Кнопки toolbar предпросмотра — выровнять по высоте
+        toolbar_h = 52
+        for w in (
+            getattr(self, "btn_font_minus", None),
+            getattr(self, "btn_font_plus", None),
+            getattr(self, "btn_bold", None),
+            getattr(self, "btn_italic", None),
+            getattr(self, "btn_underline", None),
+            getattr(self, "btn_align_left", None),
+            getattr(self, "btn_align_center", None),
+            getattr(self, "btn_align_right", None),
+        ):
+            if w is not None:
+                try:
+                    w.setMinimumHeight(toolbar_h)
+                except Exception:
+                    pass
+
+        # Нижний блок: сделать "-" и "+" для количества ближе к квадратным,
+        # за счёт ограничения ширины "Печать" / "Повторить"
+        try:
+            if hasattr(self, "copies_minus") and hasattr(self, "copies_plus"):
+                sq = 68  # высота уже 68, делаем ширину такой же
+                self.copies_minus.setFixedWidth(sq)
+                self.copies_plus.setFixedWidth(sq)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "print_btn"):
+                self.print_btn.setMaximumWidth(260)
+            if hasattr(self, "repeat_btn"):
+                self.repeat_btn.setMaximumWidth(220)
+        except Exception:
+            pass
+
+        # "Количество" — визуально как статичный элемент (без hover-эффекта) в tablet-режиме
+        # Важно: глобальный QSS использует #Btn_secondary:hover — нужны селекторы с тем же id
+        try:
+            if hasattr(self, "copies_btn"):
+                self.copies_btn.setCursor(Qt.ArrowCursor)
+                self.copies_btn.setStyleSheet(
+                    "#Btn_secondary { background: #f9fafb; border: 1px solid #d1d5db; color: #111827; "
+                    "font-weight: 700; font-size: 16px; padding: 18px 18px; border-radius: 18px; }"
+                    "#Btn_secondary:hover { background: #f9fafb; border: 1px solid #d1d5db; color: #111827; }"
+                    "#Btn_secondary:pressed { background: #f9fafb; border: 1px solid #d1d5db; color: #111827; }"
+                )
+        except Exception:
+            pass
+
+        # Чекбоксы "Ручной ввод" — чуть крупнее зона попадания
+        try:
+            for cb in (getattr(self, "made_manual", None), getattr(self, "checked_manual", None)):
+                if cb is not None:
+                    cb.setStyleSheet(
+                        "QCheckBox { padding: 6px 2px; font-size: 15px; }"
+                        "QCheckBox::indicator { width: 22px; height: 22px; }"
+                    )
+        except Exception:
+            pass
+
+        # Кнопки перелистывания истории — чуть крупнее
+        try:
+            for b in (getattr(self, "history_prev_btn", None), getattr(self, "history_next_btn", None)):
+                if b is not None:
+                    b.setMinimumHeight(52)
+                    b.setFixedWidth(64)
+        except Exception:
+            pass
 
     def _make_align_icon(self, mode):
         pix = QPixmap(26, 18)
@@ -3183,10 +3534,17 @@ def main():
 
     app = QApplication(sys.argv)
     main_window = None
+    selected_mode = None
+
+    dlg = ModeSelectDialog()
+    if dlg.exec_() != QDialog.Accepted or not dlg.selected_mode:
+        app.quit()
+        return
+    selected_mode = dlg.selected_mode
 
     def on_splash_finished():
         nonlocal main_window
-        main_window = MirlisMarkApp()
+        main_window = MirlisMarkApp(app_mode=selected_mode)
         main_window.showMaximized()
 
     video_path = SPLASH_VIDEO_PATH
