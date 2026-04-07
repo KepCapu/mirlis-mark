@@ -1417,7 +1417,6 @@ class MirlisMarkApp(QWidget):
         col_units.addWidget(lab_units)
 
         self.unit_combo = ComboBoxFixedArrow()
-        self.unit_combo.addItem("")
         col_units.addWidget(self.unit_combo)
         grid.addLayout(col_units, 1)
 
@@ -2309,7 +2308,7 @@ class MirlisMarkApp(QWidget):
                         self.unit_combo.setCurrentIndex(idxu)
             else:
                 self.unit_combo.clear()
-                self.unit_combo.addItem("")
+                # не добавляем пустой пункт — в списке должны быть только реальные единицы
 
             if show_message and not silent_errors:
                 QMessageBox.information(self, "Готово", "Excel обновлён.")
@@ -2823,7 +2822,6 @@ class MirlisMarkApp(QWidget):
     def on_product_changed(self, product_name):
         self.unit_combo.blockSignals(True)
         self.unit_combo.clear()
-        self.unit_combo.addItem("")
 
         product = self.get_product(product_name)
         if product:
@@ -2831,7 +2829,13 @@ class MirlisMarkApp(QWidget):
             if isinstance(units, str):
                 units = [u.strip() for u in units.split(",") if u.strip()]
 
+            # добавляем только непустые уникальные значения
+            seen = set()
             for u in units:
+                u = (u or "").strip()
+                if not u or u in seen:
+                    continue
+                seen.add(u)
                 if u == "kg":
                     self.unit_combo.addItem("кг")
                 elif u == "pcs":
