@@ -2010,6 +2010,31 @@ class MirlisMarkApp(QWidget):
         except Exception:
             pass
 
+        # Кнопки +/- рядом с полем количества (возле "Ед. изм.") — крупнее для тач-ввода
+        try:
+            if hasattr(self, "minus_btn") and hasattr(self, "qty_input") and hasattr(self, "plus_btn"):
+                h = 72  # оставляем высоту как сейчас
+                w_btn = 72  # было 90; -20%
+                self.minus_btn.setFixedWidth(w_btn)
+                self.plus_btn.setFixedWidth(w_btn)
+                self.minus_btn.setMinimumHeight(h)
+                self.plus_btn.setMinimumHeight(h)
+
+                # поле ввода количества: шире на ~20% и выше на ~10%
+                self.qty_input.setMinimumWidth(168)
+                self.qty_input.setMinimumHeight(int(round(h * 1.1)))
+                self.qty_input.setAlignment(Qt.AlignCenter)
+                f_qty = self.qty_input.font()
+                # Явно задаём крупный размер для tablet (не от текущего, чтобы рост был заметным)
+                f_qty.setPointSize(28)
+                f_qty.setWeight(QFont.DemiBold)
+                self.qty_input.setFont(f_qty)
+                self.qty_input.setStyleSheet(
+                    "QLineEdit { font-size: 28px; font-weight: 600; padding: 4px 10px; }"
+                )
+        except Exception:
+            pass
+
         # Кнопки toolbar предпросмотра — выровнять по высоте
         toolbar_h = 52
         for w in (
