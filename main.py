@@ -63,6 +63,7 @@ from PyQt5.QtGui import (
     QTextCharFormat,
     QTextBlockFormat,
     QTextCursor,
+    QTextDocument,
     QSurfaceFormat,
     QImage,
     QPainter,
@@ -1936,17 +1937,19 @@ class MirlisMarkApp(QWidget):
                 # Главный механизм ограничения высоты popup (tablet-only) — стандартный Qt.
                 combo.setMaxVisibleItems(limit)
 
-                # закрытый комбобокс — чуть выше и шире зона стрелки (tablet-only)
-                combo.setMinimumHeight(44)
+                # закрытый комбобокс — крупнее текст (~1.5×), без изменения popup (QListView ниже)
+                combo.setMinimumHeight(48)
                 combo.setStyleSheet(
-                    "QComboBox { min-height: 44px; padding: 6px 12px; }"
+                    "QComboBox { min-height: 48px; padding: 6px 12px; font-size: 21px; }"
                     "QComboBox::drop-down { width: 44px; }"
+                    "QComboBox QLineEdit { font-size: 21px; }"
                 )
                 if combo is self.font_size_combo:
                     combo.setStyleSheet(
-                        "QComboBox { min-height: 44px; padding-top: 6px; padding-bottom: 6px; "
-                        "padding-left: 16px; padding-right: 12px; }"
+                        "QComboBox { min-height: 48px; padding-top: 6px; padding-bottom: 6px; "
+                        "padding-left: 16px; padding-right: 12px; font-size: 21px; }"
                         "QComboBox::drop-down { width: 44px; }"
+                        "QComboBox QLineEdit { font-size: 21px; }"
                     )
 
                 # popup — свой QListView с принудительной высотой элементов
@@ -2886,11 +2889,10 @@ class MirlisMarkApp(QWidget):
         self.made_input.clear()
         self.checked_input.clear()
 
-        # Сбрасываем только следы ручного редактирования,
-        # но НЕ навязываем единый размер шрифта всем форматам.
+        # Сброс текста и форматирования preview (иначе следующая автоэтикетка наследует ручной стиль).
         if hasattr(self, "preview"):
             self.preview.clearFocus()
-            self.preview.clear()
+            self._reset_preview_document_defaults()
 
         if hasattr(self, "btn_bold"):
             self.btn_bold.blockSignals(True)
@@ -2922,11 +2924,65 @@ class MirlisMarkApp(QWidget):
             self.btn_align_right.setChecked(False)
             self.btn_align_right.blockSignals(False)
 
+        # reset toolbar font state (иначе auto preview наследует выбранный вручную шрифт/размер)
+        try:
+            if hasattr(self, "font_combo"):
+                self.font_combo.blockSignals(True)
+                self.font_combo.setCurrentFont(QFont("MS Shell Dlg 2"))
+                self.font_combo.blockSignals(False)
+        except Exception:
+            pass
+
+        self._base_font_size = 20
+
+        try:
+            if hasattr(self, "font_size_combo"):
+                self.font_size_combo.blockSignals(True)
+                self.font_size_combo.setCurrentText("20")
+                self.font_size_combo.blockSignals(False)
+        except Exception:
+            pass
+
         self._user_edited_preview = False
 
         # Важно: после сброса пусть каждая этикетка заново
         # применит СВОИ дефолтные автонастройки.
         self.refresh_preview(force=True)
+
+    def _reset_preview_document_defaults(self):
+        """Жёсткий reset QTextDocument после «Очистить», чтобы автоэтикетка не наследовала ручной стиль."""
+        if not hasattr(self, "preview"):
+            return
+        self._updating_preview = True
+        try:
+            self.preview.blockSignals(True)
+            font_family = self.font_combo.currentFont().family()
+            preview_scale = getattr(self, "_preview_scale", 1.0) or 1.0
+            effective_base = float(self._base_font_size) * float(preview_scale)
+
+            default_font = QFont(font_family, max(1, int(round(effective_base))))
+
+            # Важно: создаём новый документ, чтобы не наследовать состояние/форматы старого QTextDocument
+            doc = QTextDocument(self.preview)
+            doc.setDefaultFont(default_font)
+            self.preview.setDocument(doc)
+
+            # Сброс состояния редактора/курсорных форматов
+            self.preview.setAlignment(Qt.AlignLeft)
+            base_fmt = QTextCharFormat()
+            base_fmt.setFontFamily(font_family)
+            base_fmt.setFontPointSize(effective_base)
+            base_fmt.setFontWeight(QFont.Normal)
+            base_fmt.setFontItalic(False)
+            base_fmt.setFontUnderline(False)
+            self.preview.setCurrentCharFormat(base_fmt)
+
+            cursor = self.preview.textCursor()
+            cursor.movePosition(QTextCursor.Start)
+            self.preview.setTextCursor(cursor)
+        finally:
+            self.preview.blockSignals(False)
+            self._updating_preview = False
     # ---------------- Preview / validation ----------------
     def _unit_code_from_ui(self, unit_text):
         if unit_text == "кг":
@@ -2953,56 +3009,73 @@ class MirlisMarkApp(QWidget):
         self._updating_preview = True
         try:
             self.preview.blockSignals(True)
-            self.preview.setPlainText(text)
-
             font_family = self.font_combo.currentFont().family()
             preview_scale = getattr(self, "_preview_scale", 1.0) or 1.0
             effective_base_font = float(self._base_font_size) * float(preview_scale)
-            cursor = self.preview.textCursor()
-
-            cursor.select(QTextCursor.Document)
             fmt_base = QTextCharFormat()
             fmt_base.setFontFamily(font_family)
             fmt_base.setFontPointSize(effective_base_font)
             fmt_base.setFontWeight(QFont.Normal)
-            cursor.mergeCharFormat(fmt_base)
-            cursor.clearSelection()
+            fmt_base.setFontItalic(False)
+            fmt_base.setFontUnderline(False)
 
-            is_colored = hasattr(self, "label_size_combo") and self.label_size_combo.currentText() == "Цветные"
-            weekday_line_index = 1 if is_colored else 0
+            # Автопостроение должно быть независимым от editor state:
+            # начинаем с чистого документа и работаем только через локальные форматы/cursor.
+            self.preview.clear()
+            self.preview.document().setDefaultFont(
+                QFont(font_family, max(1, int(round(effective_base_font))))
+            )
+            self.preview.setPlainText(text)
 
-            lines = text.split("\n")
-            weekday_line = ""
-            if len(lines) > weekday_line_index:
-                weekday_line = lines[weekday_line_index].strip()
-
-            if weekday_line in self._WEEKDAYS:
+            doc = self.preview.document()
+            cursor = QTextCursor(doc)
+            cursor.beginEditBlock()
+            try:
+                # База: жёстко применяем char+block формат ко ВСЕМУ документу
+                cursor.select(QTextCursor.Document)
+                cursor.setCharFormat(fmt_base)
+                block_base = QTextBlockFormat()
+                block_base.setAlignment(Qt.AlignLeft)
+                cursor.mergeBlockFormat(block_base)
+                cursor.clearSelection()
+ 
+                is_colored = hasattr(self, "label_size_combo") and self.label_size_combo.currentText() == "Цветные"
+                weekday_line_index = 1 if is_colored else 0
+ 
+                lines = text.split("\n")
+                weekday_line = ""
+                if len(lines) > weekday_line_index:
+                    weekday_line = lines[weekday_line_index].strip()
+ 
+                if weekday_line in self._WEEKDAYS:
+                    cursor.movePosition(QTextCursor.Start)
+ 
+                    for _ in range(weekday_line_index):
+                        cursor.movePosition(QTextCursor.NextBlock)
+ 
+                    cursor.movePosition(QTextCursor.StartOfBlock)
+                    cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+ 
+                    fmt_weekday = QTextCharFormat()
+                    fmt_weekday.setFontFamily(font_family)
+ 
+                    if is_colored:
+                        fmt_weekday.setFontPointSize(max(8.0, effective_base_font * 1.8))
+                    else:
+                        fmt_weekday.setFontPointSize(max(8.0, effective_base_font * 1.3))
+ 
+                    fmt_weekday.setFontWeight(QFont.Bold)
+                    cursor.setCharFormat(fmt_weekday)
+ 
+                    block_fmt = QTextBlockFormat()
+                    block_fmt.setAlignment(Qt.AlignHCenter)
+                    cursor.mergeBlockFormat(block_fmt)
+ 
+                cursor.clearSelection()
                 cursor.movePosition(QTextCursor.Start)
-
-                for _ in range(weekday_line_index):
-                    cursor.movePosition(QTextCursor.NextBlock)
-
-                cursor.movePosition(QTextCursor.StartOfBlock)
-                cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-
-                fmt_weekday = QTextCharFormat()
-                fmt_weekday.setFontFamily(font_family)
-
-                if is_colored:
-                    fmt_weekday.setFontPointSize(max(8.0, effective_base_font * 1.8))
-                else:
-                    fmt_weekday.setFontPointSize(max(8.0, effective_base_font * 1.3))
-
-                fmt_weekday.setFontWeight(QFont.Bold)
-                cursor.mergeCharFormat(fmt_weekday)
-
-                block_fmt = QTextBlockFormat()
-                block_fmt.setAlignment(Qt.AlignHCenter)
-                cursor.mergeBlockFormat(block_fmt)
-
-            cursor.clearSelection()
-            cursor.movePosition(QTextCursor.Start)
-            self.preview.setTextCursor(cursor)
+                self.preview.setTextCursor(cursor)
+            finally:
+                cursor.endEditBlock()
         finally:
             self.preview.blockSignals(False)
             self._updating_preview = False
