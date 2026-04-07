@@ -928,8 +928,8 @@ class MirlisMarkApp(QWidget):
         self._last_printed_tspl_bytes = None
         self.last_history_entry = None
 
-        self.label_w_mm = 58.0
-        self.label_h_mm = 80.0
+        self.label_w_mm = 70.0
+        self.label_h_mm = 70.0
 
         self.products = []
         self.staff_made = []
@@ -1632,7 +1632,7 @@ class MirlisMarkApp(QWidget):
         self.label_size_combo.addItem("58×60 мм")
         self.label_size_combo.addItem("70×70 мм")
         self.label_size_combo.addItem("Цветные")
-        self.label_size_combo.setCurrentIndex(0)
+        self.label_size_combo.setCurrentIndex(2)
         self.label_size_combo.setMinimumWidth(140)
         label_size_row.addWidget(label_size_lab)
         label_size_row.addWidget(self.label_size_combo, 1)
@@ -2923,6 +2923,18 @@ class MirlisMarkApp(QWidget):
             self.btn_align_right.blockSignals(True)
             self.btn_align_right.setChecked(False)
             self.btn_align_right.blockSignals(False)
+
+        # дефолтный размер этикетки после «Очистить» — 70×70 мм
+        try:
+            if hasattr(self, "label_size_combo"):
+                self.label_size_combo.blockSignals(True)
+                self.label_size_combo.setCurrentIndex(2)
+                self.label_size_combo.blockSignals(False)
+        except Exception:
+            pass
+        self.label_w_mm = 70.0
+        self.label_h_mm = 70.0
+        self._resize_label_preview()
 
         # reset toolbar font state (иначе auto preview наследует выбранный вручную шрифт/размер)
         try:
