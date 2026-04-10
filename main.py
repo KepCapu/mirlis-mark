@@ -1481,19 +1481,19 @@ class MirlisMarkApp(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(14)
-
+        
         # -------- Top Bar --------
         top = QFrame()
         top.setObjectName("TopBar")
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(18, 14, 18, 14)
-        top_layout.setSpacing(14)
+        self.top_layout = QGridLayout(top)
+        self.top_layout.setContentsMargins(18, 4, 18, 4)
+        self.top_layout.setSpacing(4)
 
         self.logo = QLabel()
         self.logo.setStyleSheet("background: transparent;")
         self.logo.setScaledContents(False)
         self._load_logo()
-        top_layout.addWidget(self.logo, 0, Qt.AlignVCenter)
+        self.top_layout.addWidget(self.logo, 0, 0, Qt.AlignVCenter)
 
         title_block = QVBoxLayout()
         title_block.setSpacing(2)
@@ -1518,35 +1518,34 @@ class MirlisMarkApp(QWidget):
         self.subtitle.setStyleSheet("font-size: 16px; color: #64748b; padding-left: 2px; margin-top: 0px; background: transparent;")
         title_block.addWidget(self.subtitle)
 
-        top_layout.addLayout(title_block, 0)
+        self.top_layout.addLayout(title_block, 0, 1)
 
         self.excel_pill = QLabel("Excel: —")
         self.excel_pill.setObjectName("ExcelPill")
         self.excel_pill.setAlignment(Qt.AlignCenter)
-        self.excel_pill.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.excel_pill.setMinimumWidth(360)
-        self.excel_pill.setMaximumWidth(520)
         self.excel_pill.setMinimumHeight(48)
+        middleLayout = QVBoxLayout()
+        middleLayout.addWidget(self.excel_pill, 0)
 
-        top_layout.addStretch(1)
-        top_layout.addWidget(self.excel_pill, 0, Qt.AlignVCenter)
-        top_layout.addStretch(1)
+        self.top_layout.setColumnStretch(2, 1)
+        self.top_layout.addLayout(middleLayout, 0, 2, Qt.AlignVCenter)
 
         self.reload_btn = ActionBtn("Обновить", kind="default")
         self.reload_btn.clicked.connect(self.reload_excel)
-        top_layout.addWidget(self.reload_btn, 0, Qt.AlignVCenter)
+        self.top_layout.addWidget(self.reload_btn, 0, 3, Qt.AlignVCenter)
 
         self.open_folder_btn = ActionBtn("Папка", kind="default")
         self.open_folder_btn.clicked.connect(self.open_excel_folder)
-        top_layout.addWidget(self.open_folder_btn, 0, Qt.AlignVCenter)
+        self.top_layout.addWidget(self.open_folder_btn, 0, 4, Qt.AlignVCenter)
 
         self.choose_path_btn = ActionBtn("Выбрать файл", kind="default")
         self.choose_path_btn.clicked.connect(self.choose_excel_path)
-        top_layout.addWidget(self.choose_path_btn, 0, Qt.AlignVCenter)
+        self.top_layout.addWidget(self.choose_path_btn, 0, 5, Qt.AlignVCenter)
 
         self.clear_btn = ActionBtn("Очистить", kind="danger")
         self.clear_btn.clicked.connect(self.clear_fields)
-        top_layout.addWidget(self.clear_btn, 0, Qt.AlignVCenter)
+        self.top_layout.addWidget(self.clear_btn, 0, 6, Qt.AlignVCenter)
 
         root.addWidget(top)
 
@@ -2653,6 +2652,22 @@ class MirlisMarkApp(QWidget):
                 "Ошибка Excel",
                 f"Не удалось загрузить Excel.\n\nФайл: {self.excel_path}\nОшибка: {e}",
             )
+
+    def resizeEvent(self, event):    
+        if(event.size().width() <= 1290 ) :
+            self.top_layout.removeWidget(self.choose_path_btn)
+            self.top_layout.removeWidget(self.clear_btn)
+            self.top_layout.addWidget(self.clear_btn, 1, 4, Qt.AlignVCenter)
+            self.top_layout.addWidget(self.choose_path_btn, 1, 3, Qt.AlignVCenter)
+        else:
+            if(self.top_layout.rowCount() != 1):
+                self.top_layout.removeWidget(self.choose_path_btn)
+                self.top_layout.removeWidget(self.clear_btn)
+                self.top_layout.addWidget(self.clear_btn, 0, 6, Qt.AlignVCenter)
+                self.top_layout.addWidget(self.choose_path_btn, 0, 5, Qt.AlignVCenter)
+
+        super().resizeEvent(event)
+
 
     def fill_products(self, current_product=None):
         self.product_combo.blockSignals(True)
