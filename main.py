@@ -50,6 +50,7 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QDialog,
     QListView,
+    QScrollBar,
     QStyledItemDelegate,
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF
@@ -231,6 +232,45 @@ class PreviewHeaderLabel(HeaderLabel):
         super().mouseDoubleClickEvent(event)
 
 
+class _StyledScrollBar(QScrollBar):
+    """
+    Кастомный QScrollBar с закруглённым жёлтым ползунком.
+    Устанавливается на verticalScrollBar() popup QComboBox.
+    """
+
+    TRACK = QColor("#e5e7eb")
+    HANDLE = QColor("#f9b233")
+    HANDLE_HOVER = QColor("#e6a020")
+    R = 10  # радиус скругления
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Vertical, parent)
+        self.setFixedWidth(20)
+        self.R = 10
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+
+        # трек
+        painter.setBrush(self.TRACK)
+        painter.drawRoundedRect(self.rect(), self.R, self.R)
+
+        # ползунок
+        total = self.maximum() - self.minimum()
+        if total <= 0:
+            return
+        ratio_start = (self.value() - self.minimum()) / (total + self.pageStep())
+        ratio_size = self.pageStep() / (total + self.pageStep())
+        h = self.height()
+        y0 = int(ratio_start * h)
+        hh = max(int(ratio_size * h), 28)
+        hovered = self.underMouse()
+        painter.setBrush(self.HANDLE_HOVER if hovered else self.HANDLE)
+        painter.drawRoundedRect(2, y0 + 2, self.width() - 4, hh - 4, self.R, self.R)
+
+
 class ComboBoxFixedArrow(QComboBox):
     """
     Комбобокс с гарантированно видимой стрелкой.
@@ -239,6 +279,39 @@ class ComboBoxFixedArrow(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("ComboWithArrow")
+
+    def showPopup(self):
+        super().showPopup()
+        # Важно: кастомный скроллбар и маска — только для tablet.
+        # В PC popup должен оставаться прямоугольным и использовать QSS-скроллбар.
+        try:
+            app_mode = getattr(self.window(), "app_mode", "pc")
+        except Exception:
+            app_mode = "pc"
+        if app_mode != "tablet":
+            return
+
+        view = self.view()
+        if view:
+            view.scrollToTop()
+            old_sb = view.verticalScrollBar()
+            if old_sb and not isinstance(old_sb, _StyledScrollBar):
+                new_sb = _StyledScrollBar(view)
+                view.setVerticalScrollBar(new_sb)
+            # скруглить углы popup-контейнера (tablet-only)
+            container = view.window()
+            if container and not container.graphicsEffect():
+                container.setWindowFlags(container.windowFlags())
+                mask_radius = 12
+                from PyQt5.QtGui import QRegion, QPainterPath
+                path = QPainterPath()
+                path.addRoundedRect(
+                    0, 0,
+                    container.width(), container.height(),
+                    mask_radius, mask_radius
+                )
+                region = QRegion(path.toFillPolygon().toPolygon())
+                container.setMask(region)
 
 
 class ComboBoxPopupDown(ComboBoxFixedArrow):
@@ -253,6 +326,25 @@ class ComboBoxPopupDown(ComboBoxFixedArrow):
             popup = view.window()
             bottom_left = self.mapToGlobal(self.rect().bottomLeft())
             popup.move(bottom_left.x(), bottom_left.y())
+
+
+class PlainFontNameDelegate(QStyledItemDelegate):
+    """Рендерит пункты как обычный текст (без предпросмотра шрифтом)."""
+
+    def __init__(self, parent=None, min_h: int | None = None):
+        super().__init__(parent)
+        self._min_h = int(min_h) if min_h is not None else None
+
+    def sizeHint(self, option, index):
+        s = super().sizeHint(option, index)
+        if self._min_h is None:
+            return s
+        return QSize(s.width(), max(int(s.height()), self._min_h))
+
+    def paint(self, painter, option, index):
+        opt = option
+        opt.font = QFont("Segoe UI", opt.font.pointSize())
+        super().paint(painter, opt, index)
 
 
 class ToolBtn(QToolButton):
@@ -1262,25 +1354,26 @@ class MirlisMarkApp(QWidget):
             QComboBox QAbstractItemView,
             QFontComboBox QAbstractItemView {
                 background: #ffffff;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
+                border: none;
+                border-radius: 0px;
                 selection-background-color: #eef2ff;
                 selection-color: #3730a3;
                 outline: none;
-                padding: 8px 4px;
-                margin: 4px 0 0 0;
+                padding: 0px;
+                margin: 0px;
             }
 
             QComboBox QAbstractItemView::item,
             QFontComboBox QAbstractItemView::item {
-                min-height: 32px;
-                padding: 4px 12px;
-                border-radius: 8px;
+                min-height: 36px;
+                padding: 4px 10px;
+                border-radius: 0px;
             }
 
             QComboBox QAbstractItemView::item:hover,
             QFontComboBox QAbstractItemView::item:hover {
                 background: #f1f5f9;
+                color: #111827;
             }
 
             QComboBox QAbstractItemView::item:selected,
@@ -1288,8 +1381,90 @@ class MirlisMarkApp(QWidget):
                 background: #eef2ff;
                 color: #3730a3;
             }
+
+            /* Убираем внешний нативный прямоугольный контейнер popup (оставляем только styled view) */
+            QComboBoxPrivateContainer,
+            QFontComboBoxPrivateContainer {
+                background: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-radius: 12px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QComboBoxPrivateContainer > QFrame,
+            QFontComboBoxPrivateContainer > QFrame {
+                background: transparent;
+                border: none;
+                margin: 0px;
+                padding: 0px;
+            }
+
+            /* Скроллбар — глобально для всех виджетов */
+            QScrollBar:vertical {
+                background: #e5e7eb;
+                border: none;
+                border-radius: 5px;
+                width: 10px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #f9b233;
+                border-radius: 5px;
+                min-height: 32px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #e6a020;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                image: none;
+                width: 0;
+                height: 0;
+            }
             """
         _qss = _qss.replace("url(assets/combo-btn.svg)", f"url({combo_btn_path})")
+        # PC-only: popup списков — прямоугольный, скроллбар внутри с небольшим правым отступом.
+        if getattr(self, "app_mode", "pc") != "tablet":
+            _qss += """
+            QComboBoxPrivateContainer,
+            QFontComboBoxPrivateContainer {
+                background: #ffffff;
+                border: 1px solid #d0d7e2;
+                border-radius: 0px;
+            }
+            QComboBoxPrivateContainer > QFrame,
+            QFontComboBoxPrivateContainer > QFrame {
+                background: transparent;
+                border: none;
+                margin: 0px;
+                padding: 0px;
+            }
+            QComboBox QAbstractItemView,
+            QFontComboBox QAbstractItemView {
+                background: #ffffff;
+                border: 1px solid #d0d7e2;
+                border-radius: 0px;
+                padding: 0px 14px 0px 0px;
+            }
+            QComboBox QAbstractItemView QScrollBar:vertical,
+            QFontComboBox QAbstractItemView QScrollBar:vertical {
+                width: 12px;
+                margin: 2px 2px 2px 0px;
+            }
+            QComboBox QAbstractItemView QScrollBar::handle:vertical,
+            QFontComboBox QAbstractItemView QScrollBar::handle:vertical {
+                margin: 1px;
+            }
+            """
         self.setStyleSheet(_qss)
 
     # ---------------- Auto Excel refresh ----------------
@@ -1563,6 +1738,14 @@ class MirlisMarkApp(QWidget):
         self.font_combo = QFontComboBox()
         self.font_combo.setObjectName("ComboWithArrow")
         self.font_combo.setFixedWidth(220)
+        # делаем список шрифтов чище (без агрессивного предпросмотра системным рендером)
+        try:
+            self.font_combo.setView(QListView())
+            self.font_combo.view().setItemDelegate(
+                PlainFontNameDelegate(self.font_combo.view(), min_h=36)
+            )
+        except Exception:
+            pass
 
         tb.addWidget(self.btn_font_minus)
         tb.addWidget(self.btn_font_plus)
@@ -1853,11 +2036,20 @@ class MirlisMarkApp(QWidget):
                 total_height = int(total_height * 0.5)
             if combo is self.made_combo:
                 total_height = max(1, int(total_height) - 12)
+                # tablet: "изготовил" — сделать popup заметно компактнее (~1.5×)
+                total_height = int(total_height / 1.5)
+            if hasattr(self, "checked_combo") and combo is self.checked_combo:
+                # tablet: "цех" — сделать popup заметно компактнее (~1.5×)
+                total_height = int(total_height / 1.5)
             if hasattr(self, "font_combo") and combo is self.font_combo:
                 total_height = int(total_height * 0.7)
             if hasattr(self, "label_size_combo") and combo is self.label_size_combo:
-                total_height = int(total_height * 0.7)
-            view.setFixedHeight(int(total_height))
+                # tablet: "размер этикетки" — сделать popup чуть компактнее (~-20%)
+                total_height = int(total_height * 0.6776)
+            if hasattr(self, "unit_combo") and combo is self.unit_combo:
+                # tablet: unit_combo — сделать popup чуть короче (~-10%)
+                total_height = int(total_height * 0.9)
+            view.setFixedHeight(max(60, int(total_height)))
 
             # product_combo / font_combo: ограничить и внешний popup (иначе остаётся «лишняя» высота)
             popup = view.window()
@@ -1867,9 +2059,33 @@ class MirlisMarkApp(QWidget):
                 popup.setFixedHeight(int(total_height + 4))
             if popup is not None and hasattr(self, "label_size_combo") and combo is self.label_size_combo:
                 popup.setFixedHeight(int(total_height + 4))
+            if popup is not None and hasattr(self, "unit_combo") and combo is self.unit_combo:
+                popup.setFixedHeight(int(total_height + 4))
+            if popup is not None and hasattr(self, "made_combo") and combo is self.made_combo:
+                popup.setFixedHeight(int(total_height + 4))
+            if popup is not None and hasattr(self, "checked_combo") and combo is self.checked_combo:
+                popup.setFixedHeight(int(total_height + 4))
+            if popup is not None and hasattr(self, "font_size_combo") and combo is self.font_size_combo:
+                popup.setFixedHeight(int(total_height + 4))
 
             base_w = combo.width() if combo.width() > 0 else combo.sizeHint().width()
             view.setMinimumWidth(int(base_w * float(_popup_width_mult(combo))))
+
+            # После финальной геометрии — синхронизируем rounded mask контейнера (tablet-only)
+            try:
+                if popup is not None:
+                    w = int(popup.width() or 0)
+                    h = int(popup.height() or 0)
+                    if w > 0 and h > 0:
+                        from PyQt5.QtGui import QRegion, QPainterPath
+
+                        mask_radius = 13
+                        path = QPainterPath()
+                        path.addRoundedRect(0, 0, w, h, mask_radius, mask_radius)
+                        region = QRegion(path.toFillPolygon().toPolygon())
+                        popup.setMask(region)
+            except Exception:
+                pass
 
         class _TabletPopupSizer(QObject):
             def __init__(self, combo: QComboBox, view: QListView):
@@ -1880,6 +2096,10 @@ class MirlisMarkApp(QWidget):
             def eventFilter(self, obj, event):
                 if event.type() == QEvent.Show:
                     try:
+                        obj.setStyleSheet(
+                            "background: #ffffff; border: 1.5px solid #cbd5e1; "
+                            "border-radius: 13px; padding: 0px;"
+                        )
                         _apply_popup_geometry(self._combo, self._view)
                     except Exception:
                         pass
@@ -1898,6 +2118,13 @@ class MirlisMarkApp(QWidget):
                 et = event.type()
                 if et in (QEvent.MouseButtonPress, QEvent.TouchBegin):
                     try:
+                        # Применяем стиль контейнера ДО показа, чтобы не было чёрного flash
+                        popup = self._view.window()
+                        if popup is not None:
+                            popup.setStyleSheet(
+                                "background: #ffffff; border: 1.5px solid #cbd5e1; "
+                                "border-radius: 13px; padding: 0px;"
+                            )
                         self._apply_fn(self._combo, self._view)
                     except Exception:
                         pass
@@ -1906,11 +2133,17 @@ class MirlisMarkApp(QWidget):
         qss = """
             QAbstractItemView {
                 background: #ffffff;
-                border: 1px solid #e2e8f0;
-                border-radius: 14px;
+                border: none;
+                border-radius: 13px;
                 outline: none;
-                padding: 10px 6px;
-                margin: 4px 0 0 0;
+                padding: 10px 40px 10px 6px;
+                margin: 0px;
+            }
+
+            QAbstractItemView::viewport {
+                background: #ffffff;
+                border: none;
+                border-radius: 13px;
             }
 
             QAbstractItemView::item {
@@ -1927,6 +2160,42 @@ class MirlisMarkApp(QWidget):
             QAbstractItemView::item:selected {
                 background: #eef2ff;
                 color: #3730a3;
+            }
+
+            /* Современный скроллбар для tablet dropdown (как в PC стиле) */
+            QScrollBar {
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                background: #eff1f5;
+                border: none;
+                border-radius: 6px;
+                width: 20px;
+                margin: 4px 6px 4px 3px;
+            }
+            QScrollBar::handle:vertical {
+                background: #f9b233;
+                border-radius: 5px;
+                min-height: 32px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #e6a020;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+                subcontrol-origin: margin;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                image: none;
+                width: 0;
+                height: 0;
             }
         """
 
@@ -1955,7 +2224,17 @@ class MirlisMarkApp(QWidget):
                 lv = QListView()
                 lv.setUniformItemSizes(True)
                 lv.setSpacing(6)
-                lv.setStyleSheet(qss)
+                _lv_qss = qss
+                # unit_combo (tablet): не расширяем popup, но увеличиваем полезную ширину item-area
+                # за счёт меньшего правого padding у view (иначе короткие "КГ/ШТ" выглядят зажатыми).
+                if hasattr(self, "unit_combo") and combo is self.unit_combo:
+                    _lv_qss = _lv_qss.replace(
+                        "padding: 10px 40px 10px 6px;", "padding: 10px 20px 10px 6px;"
+                    )
+                    _lv_qss = _lv_qss.replace(
+                        "padding: 12px 18px;", "padding: 12px 14px;"
+                    )
+                lv.setStyleSheet(_lv_qss)
                 lv.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
                 lv.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
@@ -1963,8 +2242,35 @@ class MirlisMarkApp(QWidget):
                 f.setPointSize(max(f.pointSize(), 12))
                 lv.setFont(f)
 
-                lv.setItemDelegate(_TabletComboItemDelegate(lv, min_h=54))
+                if combo is self.font_combo:
+                    lv.setItemDelegate(PlainFontNameDelegate(lv, min_h=54))
+                else:
+                    lv.setItemDelegate(_TabletComboItemDelegate(lv, min_h=54))
                 combo.setView(lv)
+
+                # QFontComboBox (font_combo): подменяем скроллбар на кастомный, как у остальных tablet dropdown
+                try:
+                    if combo is self.font_combo:
+                        old_sb = lv.verticalScrollBar()
+                        if old_sb is not None and not isinstance(old_sb, _StyledScrollBar):
+                            lv.setVerticalScrollBar(_StyledScrollBar(lv))
+                except Exception:
+                    pass
+
+                # Убираем системную рамку/тень контейнера popup (tablet)
+                try:
+                    popup = lv.window()
+                    if popup is not None:
+                        popup.setWindowFlags(
+                            Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+                        )
+                        # WA_TranslucentBackground на Windows может давать чёрный flash
+                        popup.setStyleSheet(
+                            "background: #ffffff; border: 1.5px solid #cbd5e1; "
+                            "border-radius: 13px; padding: 0px;"
+                        )
+                except Exception:
+                    pass
 
                 if (
                     combo is self.made_combo
