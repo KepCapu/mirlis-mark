@@ -23,6 +23,9 @@ import json
 import calendar
 from datetime import datetime
 
+from statistics_page import StatisticsPage
+from resources import resource_path as _resource_path
+
 from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
@@ -52,8 +55,9 @@ from PyQt5.QtWidgets import (
     QListView,
     QScrollBar,
     QStyledItemDelegate,
+    QStackedWidget,
 )
-from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF
+from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRectF
 from PyQt5.QtCore import QObject
 from PyQt5.QtCore import QStringListModel
 from PyQt5.QtGui import (
@@ -85,11 +89,7 @@ import win32print
 # -------------------- ПУТИ: ресурсы и пользовательские данные --------------------
 def resource_path(relative_path: str) -> str:
     """Путь к встроенному ресурсу: из исходников — от корня проекта, из exe — из sys._MEIPASS."""
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, *relative_path.replace("/", os.sep).split(os.sep))
+    return _resource_path(relative_path)
 
 
 def app_data_dir() -> str:
@@ -145,6 +145,7 @@ HELP_IMG_PRODUCT = resource_path("assets/help_sheet_product.png")
 HELP_IMG_MADE = resource_path("assets/help_sheet_made.png")
 HELP_IMG_WORKSHOP = resource_path("assets/help_sheet_workshop.png")
 HELP_IMG_TABS = resource_path("assets/help_sheet_tabs.png")
+HAPPY_HERO_PATH = resource_path("assets/happy_hero.png")
 
 APP_TITLE = "Mirlis Mark — Система маркировки"
 APP_MARK = "Mark"
@@ -1127,9 +1128,11 @@ class MirlisMarkApp(QWidget):
                 background: #eef2f6;
                 border-radius: 14px;
                 padding: 10px 22px;
+                font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif;
                 font-size: 22px;
-                font-weight: 800;
+                font-weight: 650;
                 letter-spacing: 0.2px;
+                color: #1E2F45;
             }
 
             #FieldLabel {
@@ -1192,7 +1195,6 @@ class MirlisMarkApp(QWidget):
                 border: 1px solid #d0d7e2;
                 background: #ffffff;
                 color: #111827;
-                box-shadow: none;
             }
             QPushButton:hover {
                 background: #eef2ff;
@@ -1211,7 +1213,6 @@ class MirlisMarkApp(QWidget):
                 background: #f9fafb;
                 border-radius: 12px;
                 border: 1px solid #d1d5db;
-                box-shadow: none;
             }
             #StepperBtn:hover {
                 background: #e5e7eb;
@@ -1248,8 +1249,8 @@ class MirlisMarkApp(QWidget):
             #Btn_secondary {
                 background: #f9fafb;
                 border: 1px solid #d1d5db;
-                color: #111827;
-                font-weight: 700;
+                color: #24364D;
+                font-weight: 600;
                 font-size: 16px;
                 padding: 18px 18px;
                 border-radius: 18px;
@@ -1286,6 +1287,16 @@ class MirlisMarkApp(QWidget):
                 background: #fef2f2;
                 color: #fca5a5;
                 border-color: #fecaca;
+            }
+
+            #StatsBtn {
+                background: #fef3c7;
+                border: 1px solid #f59e0b;
+                color: #92400e;
+                font-weight: 700;
+            }
+            #StatsBtn:hover {
+                background: #fde68a;
             }
 
             #ToolBtn {
@@ -1502,8 +1513,8 @@ class MirlisMarkApp(QWidget):
 
         self.title_mark = QLabel(APP_MARK)
         self.title_mark.setStyleSheet(
-            'font-size: 32px; font-weight: 800; color: #0f172a; '
-            'font-family: "Segoe UI Rounded","Segoe UI","Arial"; '
+            'font-size: 32px; font-weight: 700; color: #1E2F45; '
+            'font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif; '
             "background: transparent;"
         )
         title_row.addWidget(self.title_mark)
@@ -1544,11 +1555,73 @@ class MirlisMarkApp(QWidget):
         self.choose_path_btn.clicked.connect(self.choose_excel_path)
         top_layout.addWidget(self.choose_path_btn, 0, Qt.AlignVCenter)
 
-        self.clear_btn = ActionBtn("Очистить", kind="danger")
-        self.clear_btn.clicked.connect(self.clear_fields)
-        top_layout.addWidget(self.clear_btn, 0, Qt.AlignVCenter)
+        self.stats_btn = ActionBtn("Статистика", kind="default")
+        self.stats_btn.setObjectName("StatsBtn")
+        # иконка — встроенный chart-bars через QPainter (заглушка; можно заменить на assets/stats.svg)
+        self.stats_btn.setIcon(self._make_stats_icon())
+        self.stats_btn.setIconSize(QSize(18, 18))
+        self.stats_btn.clicked.connect(self._open_statistics)
+        top_layout.addWidget(self.stats_btn, 0, Qt.AlignVCenter)
+
+        # --- Statistics mode top-bar controls (hidden by default) ---
+        self.day_btn = ActionBtn("День", kind="default")
+        self.week_btn = ActionBtn("7 дней", kind="default")
+        self.month_btn = ActionBtn("30 дней", kind="default")
+        self.period_btn = ActionBtn("Период", kind="default")
+        self.back_to_stats_dashboard_btn = ActionBtn("Вернуться на главную статистики", kind="default")
+        self.back_to_stats_dashboard_btn.setObjectName("BackToStatsDashboardBtn")
+        self.back_to_stats_dashboard_btn.setStyleSheet(
+            "#BackToStatsDashboardBtn {"
+            "background: #FFF4CC;"  # light yellow fill
+            "font-weight: 600;"
+            "color: #9A670E;"       # darker text
+            "border: 1px solid #B7791F;"  # stronger border
+            "}"
+            "#BackToStatsDashboardBtn:hover {"
+            "background: #FDE68A;"  # slightly richer but still light
+            "color: #8B5E0A;"
+            "border-color: #A16207;"
+            "}"
+            "#BackToStatsDashboardBtn:pressed {"
+            "background: #F5D76E;"  # a bit denser
+            "color: #7C4A03;"
+            "border-color: #92400E;"
+            "}"
+        )
+        self.back_to_print_btn = ActionBtn("Вернуться в режим печати", kind="danger")
+
+        self.day_btn.clicked.connect(lambda: self._set_statistics_period("day"))
+        self.week_btn.clicked.connect(lambda: self._set_statistics_period("week"))
+        self.month_btn.clicked.connect(lambda: self._set_statistics_period("month"))
+        self.period_btn.clicked.connect(self._open_statistics_custom_period)
+        self.back_to_stats_dashboard_btn.clicked.connect(self._return_to_statistics_dashboard)
+        self.back_to_print_btn.clicked.connect(self._return_to_print_mode)
+
+        for b in (self.day_btn, self.week_btn, self.month_btn, self.period_btn, self.back_to_stats_dashboard_btn, self.back_to_print_btn):
+            b.setVisible(False)
+            top_layout.addWidget(b, 0, Qt.AlignVCenter)
 
         root.addWidget(top)
+
+        # -------- Content Stack (under top bar) --------
+        self.content_stack = QStackedWidget()
+        self.main_page = QWidget()
+        self.stats_page = StatisticsPage()
+
+        self.content_stack.addWidget(self.main_page)
+        self.content_stack.addWidget(self.stats_page)
+        self.content_stack.setCurrentWidget(self.main_page)
+        root.addWidget(self.content_stack, 1)
+
+        main_page_layout = QVBoxLayout(self.main_page)
+        main_page_layout.setContentsMargins(0, 0, 0, 0)
+        main_page_layout.setSpacing(0)
+
+        self._stats_period = "day"
+        self._statistics_mode = False
+        self._set_statistics_mode(False)
+        if hasattr(self, "stats_page") and hasattr(self.stats_page, "detail_mode_changed"):
+            self.stats_page.detail_mode_changed.connect(self._on_statistics_detail_mode)
 
         # -------- Content Row --------
         row = QHBoxLayout()
@@ -1795,7 +1868,18 @@ class MirlisMarkApp(QWidget):
         # Этикетка строго по центру области предпросмотра
         wrap_lay.addWidget(self.preview, 0, 0, 1, 3, Qt.AlignHCenter | Qt.AlignTop)
 
-        # Кнопка справа, не влияет на центрирование этикетки
+        # Кнопка «Очистить» — правый нижний угол поверх preview_wrap
+        self.clear_btn = ActionBtn("Очистить", kind="danger")
+        self.clear_btn.clicked.connect(self.clear_fields)
+        if getattr(self, "app_mode", "pc") == "tablet":
+            self.clear_btn.setFixedWidth(198)
+        else:
+            self.clear_btn.setFixedWidth(138)
+        if getattr(self, "app_mode", "pc") == "tablet":
+            self.clear_btn.setFixedHeight(84)
+        else:
+            self.clear_btn.setFixedHeight(64)
+        wrap_lay.addWidget(self.clear_btn, 1, 2, Qt.AlignRight | Qt.AlignBottom)
 
         right_layout.addWidget(self.preview_wrap, 1)
 
@@ -1826,6 +1910,7 @@ class MirlisMarkApp(QWidget):
 
         self.print_btn = ActionBtn("ПЕЧАТЬ", kind="primary")
         self.repeat_btn = ActionBtn("Повторить", kind="secondary")
+        self.repeat_btn.setStyleSheet('font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif;')
         self.repeat_btn.setEnabled(False)
 
         self.copies_btn = ActionBtn("Количество", kind="secondary")
@@ -1908,7 +1993,7 @@ class MirlisMarkApp(QWidget):
         row.addWidget(left_panel, 3)
         row.addWidget(center_panel, 4)
         row.addWidget(self.history_panel, 3)
-        root.addLayout(row)
+        main_page_layout.addLayout(row)
 
         # ---------------- Signals ----------------
         self.product_combo.currentTextChanged.connect(self.on_product_changed)
@@ -2383,10 +2468,11 @@ class MirlisMarkApp(QWidget):
             if hasattr(self, "copies_btn"):
                 self.copies_btn.setCursor(Qt.ArrowCursor)
                 self.copies_btn.setStyleSheet(
-                    "#Btn_secondary { background: #f9fafb; border: 1px solid #d1d5db; color: #111827; "
-                    "font-weight: 700; font-size: 16px; padding: 18px 18px; border-radius: 18px; }"
-                    "#Btn_secondary:hover { background: #f9fafb; border: 1px solid #d1d5db; color: #111827; }"
-                    "#Btn_secondary:pressed { background: #f9fafb; border: 1px solid #d1d5db; color: #111827; }"
+                    '#Btn_secondary { background: #f9fafb; border: 1px solid #d1d5db; color: #24364D; '
+                    'font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif; '
+                    "font-weight: 600; font-size: 16px; padding: 18px 18px; border-radius: 18px; }"
+                    "#Btn_secondary:hover { background: #f9fafb; border: 1px solid #d1d5db; color: #24364D; }"
+                    "#Btn_secondary:pressed { background: #f9fafb; border: 1px solid #d1d5db; color: #24364D; }"
                 )
         except Exception:
             pass
@@ -2437,6 +2523,38 @@ class MirlisMarkApp(QWidget):
 
         for x, y, w in zip(xs, gaps, widths):
             painter.fillRect(x, y, w, bar_h, color)
+
+        painter.end()
+        return QIcon(pix)
+
+    def _make_stats_icon(self) -> QIcon:
+        size = 18
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+
+        colors = [
+            QColor("#f97316"),  # красно-оранжевый
+            QColor("#f59e0b"),  # оранжевый
+            QColor("#facc15"),  # жёлтый
+            QColor("#22c55e"),  # зелёный
+        ]
+        heights = [6, 9, 12, 15]
+
+        bar_w = 3
+        gap = 1
+        left = 2
+        bottom = size - 2
+        radius = 1.2
+
+        for i, (c, h) in enumerate(zip(colors, heights)):
+            x = left + i * (bar_w + gap)
+            y = bottom - h
+            painter.setBrush(c)
+            painter.drawRoundedRect(QRectF(x, y, bar_w, h), radius, radius)
 
         painter.end()
         return QIcon(pix)
@@ -2722,6 +2840,72 @@ class MirlisMarkApp(QWidget):
         folder = os.path.dirname(self.excel_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
+    def _open_statistics(self):
+        """Открыть страницу статистики."""
+        if hasattr(self, "content_stack") and hasattr(self, "stats_page"):
+            self.content_stack.setCurrentWidget(self.stats_page)
+        self._set_statistics_mode(True)
+        if hasattr(self, "stats_page") and hasattr(self.stats_page, "set_archive_root"):
+            self.stats_page.set_archive_root(self._labels_archive_root())
+        if hasattr(self, "stats_page") and hasattr(self.stats_page, "refresh_from_archive"):
+            self.stats_page.refresh_from_archive()
+        self._set_statistics_period(getattr(self, "_stats_period", "day"))
+
+    def _return_to_print_mode(self):
+        """Вернуться на основной экран печати."""
+        if hasattr(self, "stats_page") and hasattr(self.stats_page, "leave_statistics_detail"):
+            self.stats_page.leave_statistics_detail()
+        if hasattr(self, "content_stack") and hasattr(self, "main_page"):
+            self.content_stack.setCurrentWidget(self.main_page)
+        self._set_statistics_mode(False)
+
+    def _return_to_statistics_dashboard(self):
+        """Выйти из drill-down detail и показать главный dashboard статистики."""
+        if hasattr(self, "stats_page") and hasattr(self.stats_page, "leave_statistics_detail"):
+            self.stats_page.leave_statistics_detail()
+
+    def _on_statistics_detail_mode(self, in_detail: bool):
+        b = getattr(self, "back_to_stats_dashboard_btn", None)
+        if b is None:
+            return
+        b.setVisible(bool(in_detail) and getattr(self, "_statistics_mode", False))
+
+    def _set_statistics_mode(self, enabled: bool):
+        """Переключение видимости кнопок top bar для режима статистики."""
+        enabled = bool(enabled)
+        self._statistics_mode = enabled
+
+        for b in (getattr(self, "reload_btn", None), getattr(self, "open_folder_btn", None), getattr(self, "choose_path_btn", None), getattr(self, "stats_btn", None)):
+            if b is not None:
+                b.setVisible(not enabled)
+
+        for b in (
+            getattr(self, "day_btn", None),
+            getattr(self, "week_btn", None),
+            getattr(self, "month_btn", None),
+            getattr(self, "period_btn", None),
+            getattr(self, "back_to_print_btn", None),
+        ):
+            if b is not None:
+                b.setVisible(enabled)
+
+        bd = getattr(self, "back_to_stats_dashboard_btn", None)
+        if bd is not None:
+            bd.setVisible(enabled and getattr(self.stats_page, "_detail_mode", False) if hasattr(self, "stats_page") else False)
+
+    def _set_statistics_period(self, period: str):
+        """Выбор периода статистики: day/week/month/custom."""
+        if period not in ("day", "week", "month", "custom"):
+            return
+        self._stats_period = period
+        if hasattr(self, "stats_page") and hasattr(self.stats_page, "set_period"):
+            self.stats_page.set_period(period)
+
+    def _open_statistics_custom_period(self):
+        if hasattr(self, "stats_page") and hasattr(self.stats_page, "open_custom_period_dialog"):
+            if self.stats_page.open_custom_period_dialog(self):
+                self._stats_period = "custom"
+
     def choose_excel_path(self):
         # показываем инструкцию с картинками перед выбором файла
         dlg = QDialog(self)
@@ -2775,6 +2959,15 @@ class MirlisMarkApp(QWidget):
             lay.addWidget(sep)
 
         # --- содержимое инструкции ---
+        hero_lbl = QLabel()
+        hero_lbl.setStyleSheet("background: transparent;")
+        hero_lbl.setAlignment(Qt.AlignHCenter)
+        hero_pix = QPixmap(HAPPY_HERO_PATH)
+        if not hero_pix.isNull():
+            hero_pix = hero_pix.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            hero_lbl.setPixmap(hero_pix)
+            lay.addWidget(hero_lbl)
+
         add_title("Структура файла Excel")
         add_text(
             "Файл должен содержать 3 листа с точными названиями: «продукт», «изготовил», «цех».\n"
