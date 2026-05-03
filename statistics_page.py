@@ -13,6 +13,7 @@ from statistics_data import (
     load_print_records_from_archive,
     normalize_stat_key,
     PrintRecord,
+    compute_shift_totals,
 )
 
 from PyQt5.QtWidgets import (
@@ -31,6 +32,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QMessageBox,
     QPushButton,
+    QFileDialog,
     QGraphicsDropShadowEffect,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -64,6 +66,7 @@ from PyQt5.QtGui import (
 SAD_HERO_PATH = resource_path("assets/sad_hero.png")
 ROLL_PATH = resource_path("assets/roll.png")
 PRINTER_PATH = resource_path("assets/printer.png")
+PRINT_REPORTS_BTN_ICON_PATH = resource_path("assets/printing reports.png")
 SUN_PATH = resource_path("assets/sun.png")
 MOON_PATH = resource_path("assets/moon.png")
 
@@ -73,6 +76,31 @@ _C_TITLE = "#1E2F45"   # main titles / KPI numbers
 _C_TEXT = "#24364D"    # card titles / primary text
 _C_SUB = "#6B7C93"     # secondary text (axes / labels)
 _C_MUTED = "#7C8CA3"   # muted
+# Подписи значений над столбцами «Этикеток по часам» (графит / navy, не чистый чёрный)
+_C_HOUR_BAR_VALUE = "#102A43"
+
+# Кнопки-плитки «Импорт и экспорт» и «Печать отчётов» (один визуальный класс).
+_DASHBOARD_IO_TILE_BTN_HEIGHT_PX = 58
+_DASHBOARD_IO_TILE_ICON_PX = 48
+
+
+def _dashboard_io_tile_button_stylesheet() -> str:
+    return (
+        "QPushButton {"
+        "background: #ffffff;"
+        "border: 1px solid #d1d5db;"
+        "border-radius: 12px;"
+        f"font-family: {_STATS_FONT_FAMILY};"
+        "font-size: 14px;"
+        "font-weight: 600;"
+        f"color: {_C_TEXT};"
+        "padding: 10px 14px;"
+        "text-align: left;"
+        "}"
+        "QPushButton:hover { background: #f8fafc; border-color: #9ca3af; }"
+        "QPushButton:pressed { background: #f1f5f9; border-color: #6b7280; }"
+    )
+
 
 # Внутренняя зона графика (топ продукты / сотрудники / цехи): мягкая рамка и hover.
 _STATS_CHART_INNER_QSS = """
@@ -555,6 +583,37 @@ class _CompactKpiCard(QFrame):
         self.icon_wrap.setFixedWidth(max(pix.width(), 40))
 
 
+def _hour_bucket_is_night(hour_index: int) -> bool:
+    """Бакет i = час 0..23. Ночь 20:00–08:00: hour >= 20 или hour < 8; день 8 <= hour < 20."""
+    h = int(hour_index) % 24
+    return h >= 20 or h < 8
+
+
+def _vbar_draw_hour_chart_value_label(painter: QPainter, rect: QRect, text: str, *, night_zone: bool) -> None:
+    """
+    Подписи значений над столбцами «Этикеток по часам»: UI-style, без грубой обводки.
+
+    Ночной фон: едва заметный светлый микро-ореол (читаемость на тёмной зоне).
+    Дневной фон: лёгкая «воздушная» тень (глубина без грязи).
+    Основной цвет — графитово-синий _C_HOUR_BAR_VALUE.
+    """
+    painter.save()
+    painter.setRenderHint(QPainter.TextAntialiasing, True)
+    flags = int(Qt.AlignHCenter | Qt.AlignVCenter)
+    main = QColor(_C_HOUR_BAR_VALUE)
+    if night_zone:
+        halo = QColor(255, 255, 255, 20)
+        painter.setPen(halo)
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            painter.drawText(rect.translated(dx, dy), flags, text)
+    else:
+        painter.setPen(QColor(16, 39, 67, 34))
+        painter.drawText(rect.translated(0, 1), flags, text)
+    painter.setPen(main)
+    painter.drawText(rect, flags, text)
+    painter.restore()
+
+
 class _VBarChart(QWidget):
     hoverLabelChanged = pyqtSignal(str)
 
@@ -806,20 +865,32 @@ class _VBarChart(QWidget):
 
         painter.setPen(Qt.NoPen)
         for i, v in enumerate(self._values):
+            # Суточная гистограмма: нулевой час — без столбца, контура и подписи (никакой полоски у оси).
+            if is_hour_chart and int(v) <= 0:
+                continue
             x = plot.left() + i * slot + (slot - bar_w) / 2
             h = (v / scale_max) * plot.height()
             y = plot.bottom() - h
             is_active = (self._hover_index == i) and (self._hover_index >= 0)
             has_hover = self._hover_index >= 0
             # Bar colors:
-            # - hour chart: единый синий fill
+            # - hour chart (день, 24 бакета): ночь — голубая заливка + белый контур; день — синяя + чёрный контур
             # - time_chart 7/30 дней и custom (не по часам): тёплый вертикальный градиент внутри столбца
             # - прочие вертикальные (цехи): палитра по индексу
             if is_hour_chart:
-                painter.setPen(Qt.NoPen)
-                fill = QColor(self._bar_color)
+                if _hour_bucket_is_night(i):
+                    fill = QColor("#4dabf7")  # спокойный голубой для ночных столбцов
+                    outline = QColor("#ffffff")
+                else:
+                    fill = QColor("#2563eb")  # blue-600 / синяя заливка
+                    outline = QColor("#000000")
                 if has_hover and not is_active and getattr(self, "_detail_mode", False):
                     fill.setAlpha(170)
+                bar_pen = QPen(outline)
+                bar_pen.setWidthF(1.45)
+                bar_pen.setJoinStyle(Qt.RoundJoin)
+                bar_pen.setCapStyle(Qt.RoundCap)
+                painter.setPen(bar_pen)
                 painter.setBrush(fill)
             elif self._warm_vertical_gradient:
                 # Низ столбца — жёлтый, верх — тёплый красно-оранжевый (выше столбец — больше «горячего»)
@@ -866,26 +937,41 @@ class _VBarChart(QWidget):
                 rect = rect.adjusted(-1.0, -1.0, 1.0, 1.0)
             painter.drawRoundedRect(rect, 4, 4)
             value_font = painter.font()
-            value_font.setFamily("Segoe UI")
-            value_font.setPointSize(12)
-            value_font.setWeight(QFont.DemiBold)  # ~600
+            if is_hour_chart:
+                value_font = QFont()
+                if hasattr(value_font, "setFamilies"):
+                    value_font.setFamilies(["Inter", "Segoe UI", "Roboto", "Arial"])
+                else:
+                    value_font.setFamily("Segoe UI")
+                value_font.setPointSize(13)
+                value_font.setWeight(QFont.DemiBold)
+                value_font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+            else:
+                value_font.setFamily("Segoe UI")
+                value_font.setPointSize(12)
+                value_font.setWeight(QFont.DemiBold)
             painter.setFont(value_font)
-            painter.setPen(QColor(_C_TEXT))
             # Value label above bar: give it enough height and safe vertical alignment
             # to avoid clipping (tops of digits) on small and large values.
-            text_h = 20
-            fixed_gap = 10
+            text_h = 24 if is_hour_chart else 20
+            fixed_gap = 10  # ~8–12 px над верхом столбца
             # place the label above the bar top with a fixed pixel gap (does not depend on Y-scale)
             # clamp only to the chart's inner rect (not plot-area), so the label can use top padding
             # when the tallest bar is very close to plot.top.
             text_y = int(y) - text_h - fixed_gap
             text_y = max(int(r.top()) + 2, text_y)
-            if (not is_hour_chart) or int(v) > 0:
+            val_rect = QRect(int(x - 10), int(text_y), int(bar_w + 20), int(text_h))
+            if is_hour_chart:
+                _vbar_draw_hour_chart_value_label(
+                    painter,
+                    val_rect,
+                    str(int(v)),
+                    night_zone=_hour_bucket_is_night(i),
+                )
+            else:
+                painter.setPen(QColor(_C_TEXT))
                 painter.drawText(
-                    int(x - 10),
-                    int(text_y),
-                    int(bar_w + 20),
-                    int(text_h),
+                    val_rect,
                     Qt.AlignHCenter | Qt.AlignVCenter,
                     str(int(v)),
                 )
@@ -1676,7 +1762,6 @@ class StatisticsPage(QWidget):
             f"font-family: {_STATS_FONT_FAMILY}; font-size: 21px; font-weight: 650; line-height: 24px; "
             f"color: {_C_TITLE}; background: transparent;"
         )
-        root.addWidget(self.header, 0, Qt.AlignLeft)
 
         # content stack:
         # - page 0: empty-state
@@ -1727,6 +1812,16 @@ class StatisticsPage(QWidget):
             self._get_period_subtitle(),
         )
         self.header.hide()
+        try:
+            if getattr(self, "_stats_header_row", None) is not None:
+                self._stats_header_row.hide()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "print_reports_btn", None) is not None:
+                self.print_reports_btn.hide()
+        except Exception:
+            pass
         self.content_stack.setCurrentWidget(self.detail_view)
         self.detail_mode_changed.emit(True)
 
@@ -1735,11 +1830,44 @@ class StatisticsPage(QWidget):
             return
         self._detail_mode = False
         self.header.show()
+        try:
+            if getattr(self, "_stats_header_row", None) is not None:
+                self._stats_header_row.show()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "print_reports_btn", None) is not None:
+                self.print_reports_btn.show()
+        except Exception:
+            pass
         if self._dashboard_records:
             self.content_stack.setCurrentWidget(self.dashboard_widget)
         else:
             self.content_stack.setCurrentWidget(self.empty_state_page)
         self.detail_mode_changed.emit(False)
+
+    def _on_print_reports_clicked(self) -> None:
+        from statistics_reports_printing import run_print_reports_flow
+
+        try:
+            p = (self._period or "day").strip().lower()
+        except Exception:
+            p = "day"
+        if p == "day":
+            period_label = "День"
+        elif p == "week":
+            period_label = "7 дней"
+        elif p == "month":
+            period_label = "30 дней"
+        else:
+            period_label = "Период"
+
+        run_print_reports_flow(
+            period_label=period_label,
+            period_subtitle=self._get_period_subtitle(),
+            records=list(self._dashboard_records or []),
+            parent=self,
+        )
 
     def set_period(self, period: str):
         period = (period or "day").strip().lower()
@@ -2013,12 +2141,305 @@ class StatisticsPage(QWidget):
         self._archive_root = archive_root or None
 
     def refresh_from_archive(self):
-        if not self._archive_root:
-            self._all_records = []
-            self.refresh_dashboard()
-            return
-        self._all_records = load_print_records_from_archive(self._archive_root)
+        # Stage 2: prefer local JSONL journal; fallback to legacy txt-archive.
+        records: list[PrintRecord] = []
+        try:
+            from stats_store import read_local_entries as _read_local_entries  # local-only source
+            from stats_exchange import read_imported_entries as _read_imported_entries
+
+            entries = list(_read_local_entries() or [])
+            try:
+                entries.extend(_read_imported_entries() or [])
+            except Exception:
+                pass
+
+            # Deduplicate by record_id: local entries win, imported duplicates are ignored.
+            uniq: list[dict] = []
+            seen_ids: set[str] = set()
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                rid = str(e.get("record_id") or "").strip()
+                if rid:
+                    if rid in seen_ids:
+                        continue
+                    seen_ids.add(rid)
+                uniq.append(e)
+            entries = uniq
+
+            if entries:
+                for e in entries:
+                    if not isinstance(e, dict):
+                        continue
+                    try:
+                        ts = float(e.get("ts") or 0.0)
+                    except Exception:
+                        ts = 0.0
+                    if ts <= 0:
+                        continue
+                    try:
+                        dt = datetime.fromtimestamp(ts)
+                    except Exception:
+                        continue
+
+                    product = str(e.get("product") or "").strip() or "—"
+                    made_by = str(e.get("made_by") or "").strip() or "—"
+                    workshop = str(e.get("workshop") or "").strip() or "—"
+                    try:
+                        copies = int(e.get("copies") or 1)
+                    except Exception:
+                        copies = 1
+                    if copies <= 0:
+                        copies = 1
+
+                    records.append(PrintRecord(dt=dt, product=product, made_by=made_by, workshop=workshop, copies=copies))
+        except Exception:
+            records = []
+
+        if not records:
+            if not self._archive_root:
+                self._all_records = []
+                self.refresh_dashboard()
+                return
+            records = load_print_records_from_archive(self._archive_root)
+
+        self._all_records = records
         self.refresh_dashboard()
+
+    def _period_ts_range(self) -> tuple[float, float]:
+        """Current UI period as [from_ts, to_ts]."""
+        now = datetime.now()
+        p = (self._period or "day").strip().lower()
+        if p == "day":
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+        elif p == "week":
+            end = now
+            start = (end - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+        elif p == "month":
+            end = now
+            d0 = now.date() - timedelta(days=29)
+            start = datetime.combine(d0, datetime.min.time())
+        elif p == "custom" and self._custom_start_dt and self._custom_end_dt:
+            start = self._custom_start_dt
+            end = self._custom_end_dt
+        else:
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = now
+        return float(start.timestamp()), float(end.timestamp())
+
+    def _export_stats_package(self) -> None:
+        """Stage 3: export local JSONL entries for current period to a portable zip package."""
+        try:
+            from stats_store import read_local_entries as _read_local_entries, ensure_station_identity as _ensure_station_identity
+            from stats_exchange import export_package as _export_package
+        except Exception as e:
+            QMessageBox.warning(self, "Экспорт", f"Не удалось подготовить экспорт:\n{e}")
+            return
+
+        entries = []
+        try:
+            entries = _read_local_entries() or []
+        except Exception:
+            entries = []
+
+        from_ts, to_ts = self._period_ts_range()
+        station_uuid, station_label = ("", "")
+        try:
+            station_uuid, station_label = _ensure_station_identity()
+        except Exception:
+            station_uuid, station_label = ("", "")
+
+        if not entries:
+            QMessageBox.information(self, "Экспорт", "Нет локальных записей для экспорта (stats_journal.jsonl пуст).")
+            return
+
+        default_name = f"mirlis_stats_{int(from_ts)}_{int(to_ts)}.zip"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Экспорт статистики",
+            default_name,
+            "ZIP (*.zip)",
+        )
+        if not save_path:
+            return
+        if not save_path.lower().endswith(".zip"):
+            save_path = save_path + ".zip"
+
+        try:
+            n = _export_package(
+                entries,
+                from_ts,
+                to_ts,
+                save_path,
+                station_uuid,
+                station_label,
+                app_version="",
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Экспорт", f"Не удалось сохранить файл:\n{e}")
+            return
+
+        if n <= 0:
+            QMessageBox.information(self, "Экспорт", "За выбранный период нет записей. Файл не создан.")
+            return
+
+        QMessageBox.information(self, "Экспорт", f"Экспортировано записей: {n}\nФайл: {save_path}")
+
+    def _open_sources_dialog(self) -> None:
+        try:
+            from stats_sources_dialog import StatsSourcesDialog
+        except Exception as e:
+            QMessageBox.warning(self, "Источники", f"Не удалось открыть список источников:\n{e}")
+            return
+
+        dlg = StatsSourcesDialog(self, on_sources_changed=self.refresh_from_archive)
+        dlg.exec_()
+
+    def _export_stats_excel(self) -> None:
+        """Stage 6: export current period stats to .xlsx (human-friendly)."""
+        try:
+            from stats_store import read_local_entries as _read_local_entries
+            from stats_exchange import read_imported_entries as _read_imported_entries, export_to_excel as _export_to_excel
+        except Exception as e:
+            QMessageBox.warning(self, "Excel", f"Не удалось подготовить экспорт:\n{e}")
+            return
+
+        entries = list(_read_local_entries() or [])
+        try:
+            entries.extend(_read_imported_entries() or [])
+        except Exception:
+            pass
+
+        # Deduplicate by record_id (same logic as refresh_from_archive)
+        uniq: list[dict] = []
+        seen_ids: set[str] = set()
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            rid = str(e.get("record_id") or "").strip()
+            if rid:
+                if rid in seen_ids:
+                    continue
+                seen_ids.add(rid)
+            uniq.append(e)
+        entries = uniq
+
+        from_ts, to_ts = self._period_ts_range()
+
+        default_name = f"mirlis_stats_{int(from_ts)}_{int(to_ts)}.xlsx"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Экспорт статистики в Excel",
+            default_name,
+            "Excel Files (*.xlsx)",
+        )
+        if not save_path:
+            return
+        if not save_path.lower().endswith(".xlsx"):
+            save_path = save_path + ".xlsx"
+
+        try:
+            n = _export_to_excel(entries, from_ts, to_ts, save_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Excel", f"Не удалось сохранить файл:\n{e}")
+            return
+
+        if n <= 0:
+            QMessageBox.information(self, "Excel", "За выбранный период нет записей. Файл не создан.")
+            return
+
+        QMessageBox.information(self, "Excel", f"Экспортировано записей: {n}\nФайл: {save_path}")
+
+    def _import_stats_package(self) -> None:
+        """Stage 4: import a previously exported stats package zip."""
+        try:
+            from stats_exchange import (
+                inspect_package as _inspect_package,
+                import_package as _import_package,
+                list_imported_sources as _list_imported_sources,
+            )
+            from stats_store import ensure_station_identity as _ensure_station_identity
+        except Exception as e:
+            QMessageBox.warning(self, "Импорт", f"Не удалось подготовить импорт:\n{e}")
+            return
+
+        zip_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Импорт пакета статистики",
+            "",
+            "ZIP (*.zip)",
+        )
+        if not zip_path:
+            return
+
+        try:
+            m = _inspect_package(zip_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Импорт", f"Не удалось прочитать пакет:\n{e}")
+            return
+
+        # Precheck BEFORE confirmation:
+        # 1) already imported by package_id
+        pkg_id = str(m.get("package_id") or "").strip()
+        if pkg_id:
+            try:
+                for it in (_list_imported_sources() or []):
+                    if str(it.get("package_id") or "").strip() == pkg_id:
+                        QMessageBox.information(self, "Импорт", "Этот пакет уже импортирован (package_id совпадает).")
+                        return
+            except Exception:
+                pass
+
+        # 2) self-import by station_uuid
+        try:
+            local_station_uuid, _local_station_label = _ensure_station_identity()
+            src_station_uuid = str(m.get("source_station_uuid") or "").strip()
+            if src_station_uuid and str(local_station_uuid or "").strip() == src_station_uuid:
+                QMessageBox.information(
+                    self,
+                    "Импорт",
+                    "Этот пакет был создан на текущей станции/этом ПК. Импорт приведёт к дублям и не требуется.",
+                )
+                return
+        except Exception:
+            # If we cannot determine identity, don't block confirmation/import here.
+            pass
+
+        src_label = str(m.get("source_station_label") or "—")
+        src_uuid = str(m.get("source_station_uuid") or "—")
+        try:
+            pf = float(m.get("period_from") or 0.0)
+            pt = float(m.get("period_to") or 0.0)
+        except Exception:
+            pf, pt = 0.0, 0.0
+        try:
+            rc = int(m.get("record_count") or 0)
+        except Exception:
+            rc = 0
+
+        msg = (
+            f"Источник: {src_label}\n"
+            f"UUID: {src_uuid}\n"
+            f"Период: {datetime.fromtimestamp(pf).strftime('%d.%m.%Y %H:%M')} — {datetime.fromtimestamp(pt).strftime('%d.%m.%Y %H:%M')}\n"
+            f"Записей: {rc}\n\n"
+            "Импортировать этот пакет?"
+        )
+        if QMessageBox.question(self, "Импорт", msg, QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+
+        try:
+            rec = _import_package(zip_path)
+        except Exception as e:
+            QMessageBox.information(self, "Импорт", str(e))
+            return
+
+        QMessageBox.information(
+            self,
+            "Импорт",
+            f"Пакет импортирован.\nЗаписей: {rec.get('record_count', 0)}",
+        )
+        self.refresh_from_archive()
 
     def set_has_data(self, has_data: bool):
         # kept for backwards-compat calls from main.py; actual state is driven by records
@@ -2091,8 +2512,9 @@ class StatisticsPage(QWidget):
         # Контроль пропорций по вертикали: средний ряд получает больше свободного места,
         # нижний ряд не должен схлопываться из-за жёстких minHeight сверху.
         grid.setRowStretch(0, 0)
-        grid.setRowStretch(1, 1)
+        grid.setRowStretch(1, 0)
         grid.setRowStretch(2, 1)
+        grid.setRowStretch(3, 1)
 
         # 12-column grid:
         # top row -> 4 / 4 / 2 / 2
@@ -2101,40 +2523,115 @@ class StatisticsPage(QWidget):
         for c in range(12):
             grid.setColumnStretch(c, 1)
 
-        # KPI row
+        # Row 0: header row (title centered, print button right)
+        self._stats_header_row = QWidget()
+        self._stats_header_row.setStyleSheet("background: transparent; border: none;")
+        header_row_lay = QGridLayout(self._stats_header_row)
+        header_row_lay.setContentsMargins(0, 0, 0, 0)
+        header_row_lay.setHorizontalSpacing(0)
+        header_row_lay.setVerticalSpacing(0)
+        header_row_lay.setColumnStretch(0, 1)
+        header_row_lay.setColumnStretch(1, 0)
+        header_row_lay.setColumnStretch(2, 1)
+
+        self.print_reports_btn = QPushButton("Печать отчётов")
+        self.print_reports_btn.setCursor(Qt.PointingHandCursor)
+        self.print_reports_btn.setFixedHeight(_DASHBOARD_IO_TILE_BTN_HEIGHT_PX)
+        self.print_reports_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.print_reports_btn.setStyleSheet(_dashboard_io_tile_button_stylesheet())
+        try:
+            pm = QPixmap(PRINT_REPORTS_BTN_ICON_PATH)
+            if not pm.isNull():
+                _isz = _DASHBOARD_IO_TILE_ICON_PX
+                pm = pm.scaled(_isz, _isz, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.print_reports_btn.setIcon(QIcon(pm))
+                self.print_reports_btn.setIconSize(QSize(_isz, _isz))
+        except Exception:
+            pass
+        try:
+            self.print_reports_btn.clicked.connect(self._on_print_reports_clicked)
+        except Exception:
+            pass
+
+        header_row_lay.addWidget(self.header, 0, 1, Qt.AlignHCenter | Qt.AlignVCenter)
+        header_row_lay.addWidget(self.print_reports_btn, 0, 2, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(self._stats_header_row, 0, 0, 1, 12, Qt.AlignBottom)
+
+        # KPI row (row 1)
         self.kpi_labels = _KpiCard("Этикеток", icon_path=ROLL_PATH)
         self.kpi_ops = _KpiCard("Операций", icon_path=PRINTER_PATH)
 
-        def _make_placeholder_card(text: str) -> QFrame:
-            card = QFrame()
-            card.setObjectName("StatsCard")
-            card.setStyleSheet("background: #ffffff; border: 1px solid #e5e7eb; border-radius: 18px;")
-            card.setFixedHeight(102)
-            lay = QVBoxLayout(card)
-            lay.setContentsMargins(16, 10, 16, 10)
-            lay.setSpacing(0)
-            lbl = QLabel(text)
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet(
-                f"font-family: {_STATS_FONT_FAMILY}; font-size: 11px; font-weight: 500; line-height: 14px; "
-                f"color: {_C_MUTED}; background: transparent; border: none;"
-            )
-            lay.addStretch(1)
-            lay.addWidget(lbl, 0, Qt.AlignCenter)
-            lay.addStretch(1)
-            return card
+        # Import/Export module (Stage 6 UI polish)
+        self.io_card = _Card("Импорт и экспорт")
+        # Prevent any inner "boxed" border around the card body (only keep outer card border).
+        try:
+            self.io_card.body.setStyleSheet("background: transparent; border: none;")
+        except Exception:
+            pass
+        # Make this card more compact than a regular _Card (only for io_card).
+        try:
+            if self.io_card.layout() is not None:
+                self.io_card.layout().setContentsMargins(14, 10, 14, 10)
+                self.io_card.layout().setSpacing(6)
+        except Exception:
+            pass
+        try:
+            self.io_card.body_lay.setSpacing(6)
+        except Exception:
+            pass
 
-        self.excel_reserve_card = _make_placeholder_card("Резерв под Excel")
-        self.print_reports_card = _make_placeholder_card("Печать отчёта")
+        io_sub = QLabel("Работа с файлами и источниками данных")
+        io_sub.setStyleSheet(
+            f'font-family: {_STATS_FONT_FAMILY}; font-size: 12px; font-weight: 600; line-height: 14px; color: {_C_TEXT}; '
+            "background: transparent; border: none; padding: 0; margin: 0;"
+        )
+
+        tiles = QGridLayout()
+        tiles.setContentsMargins(0, 0, 0, 0)
+        tiles.setHorizontalSpacing(8)
+        tiles.setVerticalSpacing(8)
+
+        def _make_tile(text: str, icon_rel_path: str, handler) -> QPushButton:
+            btn = QPushButton(text)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedHeight(_DASHBOARD_IO_TILE_BTN_HEIGHT_PX)
+            btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            btn.setStyleSheet(_dashboard_io_tile_button_stylesheet())
+            try:
+                pm = QPixmap(resource_path(icon_rel_path))
+                if not pm.isNull():
+                    _isz = _DASHBOARD_IO_TILE_ICON_PX
+                    pm = pm.scaled(_isz, _isz, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    btn.setIcon(QIcon(pm))
+                    btn.setIconSize(QSize(_isz, _isz))
+            except Exception:
+                pass
+            try:
+                btn.clicked.connect(handler)
+            except Exception:
+                pass
+            return btn
+
+        t_import = _make_tile("Импорт данных", "assets/data_import.png", self._import_stats_package)
+        t_excel = _make_tile("Экспорт в Excel", "assets/excel_export.png", self._export_stats_excel)
+        t_pkg = _make_tile("Экспорт пакета", "assets/package_export.png", self._export_stats_package)
+        t_sources = _make_tile("Источники данных", "assets/data_sources.png", self._open_sources_dialog)
+
+        tiles.addWidget(t_import, 0, 0)
+        tiles.addWidget(t_excel, 0, 1)
+        tiles.addWidget(t_pkg, 1, 0)
+        tiles.addWidget(t_sources, 1, 1)
+
+        self.io_card.body_lay.addWidget(io_sub, 0, Qt.AlignLeft)
+        self.io_card.body_lay.addLayout(tiles, 0)
         self.kpi_day_shift = _CompactKpiCard("Дневная смена", icon_path=SUN_PATH)
         self.kpi_night_shift = _CompactKpiCard("Ночная смена", icon_path=MOON_PATH)
 
-        grid.addWidget(self.kpi_labels, 0, 0, 1, 2)
-        grid.addWidget(self.kpi_ops, 0, 2, 1, 2)
-        grid.addWidget(self.excel_reserve_card, 0, 4, 1, 2)
-        grid.addWidget(self.print_reports_card, 0, 6, 1, 2)
-        grid.addWidget(self.kpi_day_shift, 0, 8, 1, 2)
-        grid.addWidget(self.kpi_night_shift, 0, 10, 1, 2)
+        grid.addWidget(self.kpi_labels, 1, 0, 1, 2, Qt.AlignBottom)
+        grid.addWidget(self.kpi_ops, 1, 2, 1, 2, Qt.AlignBottom)
+        grid.addWidget(self.io_card, 1, 4, 1, 4)
+        grid.addWidget(self.kpi_day_shift, 1, 8, 1, 2, Qt.AlignBottom)
+        grid.addWidget(self.kpi_night_shift, 1, 10, 1, 2, Qt.AlignBottom)
 
         # Middle wide chart
         self.time_card = _Card("Этикеток по часам")
@@ -2142,7 +2639,7 @@ class StatisticsPage(QWidget):
         self.time_chart.set_show_all_x_labels(True)
         self.time_chart.set_hour_zones_background(True)
         self.time_card.body_lay.addWidget(self.time_chart, 1)
-        grid.addWidget(self.time_card, 1, 0, 1, 12)
+        grid.addWidget(self.time_card, 2, 0, 1, 12)
 
         # Bottom row (3 cards, each spans 2 columns)
         self.top_products_card = _Card("Топ продуктов")
@@ -2164,7 +2661,7 @@ class StatisticsPage(QWidget):
         for _w in (tp_wrap, self.top_products_chart, self.top_products_pie):
             _w.installEventFilter(_tp_click)
         self.top_products_card.body_lay.addWidget(tp_wrap, 1)
-        grid.addWidget(self.top_products_card, 2, 0, 1, 4)
+        grid.addWidget(self.top_products_card, 3, 0, 1, 4)
 
         self.top_staff_card = _Card("Топ сотрудников")
         self.top_staff_chart = _HBarChart()
@@ -2185,7 +2682,7 @@ class StatisticsPage(QWidget):
         for _w in (ts_wrap, self.top_staff_chart, self.top_staff_pie):
             _w.installEventFilter(_ts_click)
         self.top_staff_card.body_lay.addWidget(ts_wrap, 1)
-        grid.addWidget(self.top_staff_card, 2, 4, 1, 4)
+        grid.addWidget(self.top_staff_card, 3, 4, 1, 4)
 
         self.workshops_card = _Card("Распределение по цехам")
         self.workshops_chart = _VBarChart()
@@ -2205,7 +2702,7 @@ class StatisticsPage(QWidget):
         for _w in (ws_wrap, self.workshops_chart, self.workshops_pie):
             _w.installEventFilter(_ws_click)
         self.workshops_card.body_lay.addWidget(ws_wrap, 1)
-        grid.addWidget(self.workshops_card, 2, 8, 1, 4)
+        grid.addWidget(self.workshops_card, 3, 8, 1, 4)
 
         def _make_view_toggle(on_bar, on_pie) -> QWidget:
             w = QWidget()
@@ -2250,7 +2747,9 @@ class StatisticsPage(QWidget):
                 b.setFixedSize(52, 28)
                 b.setStyleSheet(
                     "QToolButton { background: transparent; border: 1px solid rgba(148,163,184,0.35); border-radius: 8px; }"
+                    "QToolButton:!checked:hover { background: rgba(248,250,252,0.98); border: 1px solid rgba(148,163,184,0.55); }"
                     "QToolButton:checked { background: rgba(224,231,255,0.8); border: 1px solid rgba(99,102,241,0.45); }"
+                    "QToolButton:checked:hover { background: rgba(219,225,254,0.95); border: 1px solid rgba(99,102,241,0.58); }"
                 )
 
             btn_bar.setIcon(icon_bar())
@@ -2315,19 +2814,8 @@ class StatisticsPage(QWidget):
         self.kpi_ops.set_value(ops)
         self.kpi_labels.set_value(labels_total)
 
-        # Сменные счётчики: только за сегодня, но в рамках выбранного периода статистики.
-        today = now.date()
-        day_shift_total = 0
-        night_shift_total = 0
-        for r in records:
-            if r.dt.date() != today:
-                continue
-            hour = r.dt.hour
-            copies = int(r.copies)
-            if 8 <= hour < 20:
-                day_shift_total += copies
-            else:
-                night_shift_total += copies
+        # Сменные счётчики: по всем записям внутри выбранного периода.
+        day_shift_total, night_shift_total = compute_shift_totals(records)
         self.kpi_day_shift.set_value(day_shift_total)
         self.kpi_night_shift.set_value(night_shift_total)
 

@@ -84,6 +84,7 @@ from label_logic import build_label, format_dt
 from printer import print_text_as_bitmap_tspl, print_raw
 from openpyxl import load_workbook as _peek_workbook
 import win32print
+from stats_store import append_entry as _append_stats_entry
 
 
 # -------------------- ПУТИ: ресурсы и пользовательские данные --------------------
@@ -191,6 +192,31 @@ def _safe_int(v, default=0):
         return int(v)
     except Exception:
         return default
+
+
+def _repair_mojibake_utf8_as_cp1251(s: str) -> str:
+    """
+    Best-effort repair for the typical case:
+    UTF-8 bytes were mistakenly decoded as cp1251, producing strings like "РЁР°...".
+    We fix it at the data-ingest stage (Excel -> app) so downstream storage remains clean.
+    """
+    try:
+        src = "" if s is None else str(s)
+    except Exception:
+        return ""
+    if not src:
+        return src
+    # Heuristic trigger: common mojibake sequences for Cyrillic in this project.
+    if ("Р" not in src and "С" not in src) or src.count("Р") + src.count("С") < 2:
+        return src
+    try:
+        repaired = src.encode("cp1251", errors="strict").decode("utf-8", errors="strict")
+    except Exception:
+        return src
+    # Accept only if it looks like a real Cyrillic string and is different.
+    if repaired and repaired != src:
+        return repaired
+    return src
 
 
 # -------------------- UI Building Blocks --------------------
@@ -1269,6 +1295,17 @@ class MirlisMarkApp(QWidget):
                 border-color: #e5e7eb;
             }
 
+            /* Подпись «Количество»: тот же вид, что у Btn_secondary в покое, без hover/клика */
+            #CopiesCaption {
+                background: #f9fafb;
+                border: 1px solid #d1d5db;
+                color: #24364D;
+                font-weight: 600;
+                font-size: 16px;
+                padding: 18px 18px;
+                border-radius: 18px;
+            }
+
             #Btn_danger {
                 border: 1px solid #ef4444;
                 color: #b91c1c;
@@ -1913,7 +1950,10 @@ class MirlisMarkApp(QWidget):
         self.repeat_btn.setStyleSheet('font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif;')
         self.repeat_btn.setEnabled(False)
 
-        self.copies_btn = ActionBtn("Количество", kind="secondary")
+        self.copies_caption = QLabel("Количество")
+        self.copies_caption.setObjectName("CopiesCaption")
+        self.copies_caption.setAlignment(Qt.AlignCenter)
+        self.copies_caption.setFocusPolicy(Qt.NoFocus)
         self.copies_minus = ActionBtn("−", kind="default")
         self.copies_minus.setFixedWidth(44)
         self.copies_minus.setAutoRepeat(True)
@@ -1932,12 +1972,12 @@ class MirlisMarkApp(QWidget):
         cw = QHBoxLayout(copies_wrap)
         cw.setContentsMargins(0, 0, 0, 0)
         cw.setSpacing(8)
-        cw.addWidget(self.copies_btn, 1)
+        cw.addWidget(self.copies_caption, 1)
         cw.addWidget(self.copies_minus, 0)
         cw.addWidget(self.copies_input, 0)
         cw.addWidget(self.copies_plus, 0)
 
-        for w in (self.print_btn, self.repeat_btn, self.copies_btn, self.copies_minus, self.copies_plus, self.copies_input):
+        for w in (self.print_btn, self.repeat_btn, self.copies_caption, self.copies_minus, self.copies_plus, self.copies_input):
             w.setMinimumHeight(68)
 
         for w in (self.minus_btn, self.plus_btn, self.copies_minus, self.copies_plus):
@@ -2462,21 +2502,6 @@ class MirlisMarkApp(QWidget):
         except Exception:
             pass
 
-        # "Количество" — визуально как статичный элемент (без hover-эффекта) в tablet-режиме
-        # Важно: глобальный QSS использует #Btn_secondary:hover — нужны селекторы с тем же id
-        try:
-            if hasattr(self, "copies_btn"):
-                self.copies_btn.setCursor(Qt.ArrowCursor)
-                self.copies_btn.setStyleSheet(
-                    '#Btn_secondary { background: #f9fafb; border: 1px solid #d1d5db; color: #24364D; '
-                    'font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif; '
-                    "font-weight: 600; font-size: 16px; padding: 18px 18px; border-radius: 18px; }"
-                    "#Btn_secondary:hover { background: #f9fafb; border: 1px solid #d1d5db; color: #24364D; }"
-                    "#Btn_secondary:pressed { background: #f9fafb; border: 1px solid #d1d5db; color: #24364D; }"
-                )
-        except Exception:
-            pass
-
         # Чекбоксы "Ручной ввод" — чуть крупнее зона попадания
         try:
             for cb in (getattr(self, "made_manual", None), getattr(self, "checked_manual", None)):
@@ -2704,6 +2729,13 @@ class MirlisMarkApp(QWidget):
             if sheet_products:
                 products_all = load_products(self.excel_path, sheet_name=sheet_products)
                 self.products = [p for p in products_all if int(p.get("active", 0)) == 1]
+                # Repair typical mojibake (if Excel/source was imported with wrong encoding).
+                for p in self.products:
+                    if isinstance(p, dict):
+                        if "name" in p:
+                            p["name"] = _repair_mojibake_utf8_as_cp1251(p.get("name") or "")
+                        if "comment" in p:
+                            p["comment"] = _repair_mojibake_utf8_as_cp1251(p.get("comment") or "")
                 self.products.sort(key=lambda x: (x.get("name") or "").lower())
             else:
                 self.products = []
@@ -2720,8 +2752,20 @@ class MirlisMarkApp(QWidget):
             else:
                 self.staff_checked = []
 
-            self.staff_made = [{"fio": (x.get("fio") or x.get("name") or "").strip(), "active": x.get("active", 1)} for x in self.staff_made]
-            self.staff_checked = [{"fio": (x.get("fio") or x.get("name") or "").strip(), "active": x.get("active", 1)} for x in self.staff_checked]
+            self.staff_made = [
+                {
+                    "fio": _repair_mojibake_utf8_as_cp1251((x.get("fio") or x.get("name") or "")).strip(),
+                    "active": x.get("active", 1),
+                }
+                for x in self.staff_made
+            ]
+            self.staff_checked = [
+                {
+                    "fio": _repair_mojibake_utf8_as_cp1251((x.get("fio") or x.get("name") or "")).strip(),
+                    "active": x.get("active", 1),
+                }
+                for x in self.staff_checked
+            ]
 
             self.staff_made.sort(key=lambda x: (x.get("fio") or "").lower())
             self.staff_checked.sort(key=lambda x: (x.get("fio") or "").lower())
@@ -4030,6 +4074,21 @@ class MirlisMarkApp(QWidget):
             self._archive_printed_label(preview_text=preview_text, entry=entry, copies=copies)
         except Exception as e:
             sys.stderr.write(f"[MirlisMark] Archive save error: {e}\n")
+        # New structured stats journal (JSONL). Must never break printing.
+        try:
+            _append_stats_entry(
+                product=str(entry.get("product_name") or entry.get("product") or ""),
+                qty=str(entry.get("qty_value") or ""),
+                unit=str(entry.get("unit_ui") or ""),
+                made_by=str(entry.get("made_by") or entry.get("made") or ""),
+                workshop=str(entry.get("checked_by") or entry.get("checked") or ""),
+                batch=str(entry.get("batch") or ""),
+                copies=int(copies),
+                ts=float(entry.get("ts") or time.time()),
+                record_id=str(entry.get("id") or ""),
+            )
+        except Exception as e:
+            sys.stderr.write(f"[MirlisMark] stats_journal append error: {e}\n")
         self._append_history_entry(entry)
 
     def repeat_last_print(self):
@@ -4050,6 +4109,21 @@ class MirlisMarkApp(QWidget):
                     self._archive_printed_label(preview_text=e.get("preview_text", ""), entry=e, copies=copies)
                 except Exception as arch_e:
                     sys.stderr.write(f"[MirlisMark] Archive save error: {arch_e}\n")
+                # New structured stats journal (JSONL). Must never break printing.
+                try:
+                    _append_stats_entry(
+                        product=str(e.get("product_name") or e.get("product") or ""),
+                        qty=str(e.get("qty_value") or ""),
+                        unit=str(e.get("unit_ui") or ""),
+                        made_by=str(e.get("made_by") or e.get("made") or ""),
+                        workshop=str(e.get("checked_by") or e.get("checked") or ""),
+                        batch=str(e.get("batch") or ""),
+                        copies=int(copies),
+                        ts=float(e.get("ts") or time.time()),
+                        record_id=str(e.get("id") or ""),
+                    )
+                except Exception as stats_e:
+                    sys.stderr.write(f"[MirlisMark] stats_journal append error: {stats_e}\n")
                 self._append_history_entry(e)
         except Exception as e:
             QMessageBox.warning(self, "Повтор", f"Не удалось повторить печать:\n{e}")

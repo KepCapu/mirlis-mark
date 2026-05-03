@@ -15,6 +15,32 @@ class PrintRecord:
     copies: int
 
 
+def compute_shift_totals(records: Iterable[PrintRecord]) -> tuple[int, int]:
+    """Return (day_shift_labels, night_shift_labels) for provided records.
+
+    Day shift: 08:00–19:59
+    Night shift: 20:00–07:59
+    """
+    day_shift_total = 0
+    night_shift_total = 0
+    for r in (records or []):
+        try:
+            hour = int(r.dt.hour)
+        except Exception:
+            continue
+        try:
+            copies = int(getattr(r, "copies", 0) or 0)
+        except Exception:
+            copies = 0
+        if copies <= 0:
+            continue
+        if 8 <= hour < 20:
+            day_shift_total += copies
+        else:
+            night_shift_total += copies
+    return day_shift_total, night_shift_total
+
+
 def normalize_stat_key(value: object) -> str | None:
     """Normalize category key for stats aggregation.
 
