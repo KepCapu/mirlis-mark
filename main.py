@@ -56,6 +56,9 @@ from PyQt5.QtWidgets import (
     QScrollBar,
     QStyledItemDelegate,
     QStackedWidget,
+    QGraphicsView,
+    QGraphicsScene,
+    QGraphicsProxyWidget,
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRectF
 from PyQt5.QtCore import QObject
@@ -73,6 +76,7 @@ from PyQt5.QtGui import (
     QImage,
     QPainter,
     QColor,
+    QBrush,
 )
 
 # PyQt5: мультимедиа
@@ -85,6 +89,13 @@ from printer import print_text_as_bitmap_tspl, print_raw
 from openpyxl import load_workbook as _peek_workbook
 import win32print
 from stats_store import append_entry as _append_stats_entry
+
+# --- Компенсация preview/печати под high-DPI Windows (эталон ≈ 96 logical DPI, DPR 1). Подкрутка вручную: ---
+SCREEN_COMP_REF_LOGICAL_DPI = 96.0
+SCREEN_COMP_LDPI_BLEND = 0.55
+SCREEN_COMP_MIN = 0.78
+SCREEN_COMP_MANUAL_MULTIPLIER = 1.0
+SCREEN_COMP_DPR_EXTRA = 0.12
 
 
 # -------------------- ПУТИ: ресурсы и пользовательские данные --------------------
@@ -1072,6 +1083,8 @@ class MirlisMarkApp(QWidget):
         self._preview_manual_mode = False
         self._base_font_size = 20
         self._preview_scale = 1.0
+        self._screen_compensation_scale = 1.0
+        self._last_screen_comp_sig = None
 
         self.history_entries = []
         self._history_filter_text = ""
@@ -1147,6 +1160,11 @@ class MirlisMarkApp(QWidget):
             }
 
             #LabelWrap {
+                background: transparent;
+            }
+
+            #LabelPreviewView {
+                border: none;
                 background: transparent;
             }
 
@@ -1880,7 +1898,8 @@ class MirlisMarkApp(QWidget):
         self.preview.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.preview.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        self.preview.setFixedSize(450, 600)
+        lw0, lh0 = self._logical_preview_size()
+        self.preview.setFixedSize(lw0, lh0)
 
         self.preview.setStyleSheet(
             """
@@ -1897,13 +1916,34 @@ class MirlisMarkApp(QWidget):
         self.preview_wrap = QFrame()
         self.preview_wrap.setObjectName("LabelWrap")
 
+        # Логический размер этикетки фиксирован (450 × пропорция мм); вписывание в окно — только
+        # масштаб QGraphicsView, без изменения pt в QTextDocument (иначе «плывёт» между мониторами).
+        self._preview_scene = QGraphicsScene(self)
+        self._preview_proxy = QGraphicsProxyWidget()
+        self._preview_proxy.setWidget(self.preview)
+        self._preview_scene.addItem(self._preview_proxy)
+
+        self.preview_view = QGraphicsView(self._preview_scene, self.preview_wrap)
+        self.preview_view.setObjectName("LabelPreviewView")
+        self.preview_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.preview_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.preview_view.setFrameShape(QFrame.NoFrame)
+        self.preview_view.setBackgroundBrush(QBrush(Qt.transparent))
+        self.preview_view.setAlignment(Qt.AlignCenter)
+        self.preview_view.setDragMode(QGraphicsView.NoDrag)
+        self.preview_view.setRenderHint(QPainter.Antialiasing, True)
+        self.preview_view.setRenderHint(QPainter.TextAntialiasing, True)
+        self.preview_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.preview_view.setMinimumSize(80, 80)
+
         wrap_lay = QGridLayout(self.preview_wrap)
         wrap_lay.setContentsMargins(12, 12, 12, 12)
         wrap_lay.setHorizontalSpacing(0)
         wrap_lay.setVerticalSpacing(0)
+        wrap_lay.setRowStretch(0, 1)
 
-        # Этикетка строго по центру области предпросмотра
-        wrap_lay.addWidget(self.preview, 0, 0, 1, 3, Qt.AlignHCenter | Qt.AlignTop)
+        # Этикетка строго по центру области предпросмотра (масштаб view, не документа)
+        wrap_lay.addWidget(self.preview_view, 0, 0, 1, 3, Qt.AlignHCenter | Qt.AlignTop)
 
         # Кнопка «Очистить» — правый нижний угол поверх preview_wrap
         self.clear_btn = ActionBtn("Очистить", kind="danger")
@@ -2082,14 +2122,16 @@ class MirlisMarkApp(QWidget):
         self.history_prev_btn.clicked.connect(lambda: self._change_history_page(-1))
         self.history_next_btn.clicked.connect(lambda: self._change_history_page(+1))
 
-        self.preview.setFont(QFont("Segoe UI", self._base_font_size))
-
         for cb in (self.product_combo, self.unit_combo, self.made_combo, self.checked_combo, self.font_combo, self.label_size_combo):
             cb.setObjectName("ComboWithArrow")
 
         if getattr(self, "app_mode", "pc") == "tablet":
             self._apply_tablet_combobox_popups()
             self._apply_tablet_ui_tweaks()
+
+        self._resize_label_preview()
+        eff0 = self._effective_preview_font_scale()
+        self.preview.setFont(QFont("Segoe UI", max(8, int(round(self._base_font_size * eff0)))))
 
         self._rebuild_history_view()
 
@@ -2604,42 +2646,149 @@ class MirlisMarkApp(QWidget):
         if hasattr(self, "history_panel"):
             self.history_panel.setVisible(self.width() >= 1100)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            self._update_screen_compensation_scale()
+        except Exception:
+            pass
+
+    def _effective_preview_font_scale(self):
+        """Множитель pt в документе: окно (_preview_scale) × компенсация экрана."""
+        a = float(getattr(self, "_preview_scale", 1.0) or 1.0)
+        b = float(getattr(self, "_screen_compensation_scale", 1.0) or 1.0)
+        return max(0.4, min(1.5, a * b))
+
+    def _get_screen_compensation_scale(self):
+        """
+        Практический коэффициент < 1 на high-DPI / масштабировании Windows; ≈1 на эталонном 96 DPI.
+        Не использует диагональ — только logical/physical DPI и DPR экрана Qt.
+        """
+        screen = None
+        try:
+            wh = self.windowHandle()
+            if wh is not None:
+                screen = wh.screen()
+        except Exception:
+            pass
+        if screen is None:
+            app = QApplication.instance()
+            if app is not None:
+                screen = app.primaryScreen()
+
+        if screen is None:
+            self._screen_comp_last_meta = {}
+            return 1.0
+
+        ldpi = float(screen.logicalDotsPerInchX())
+        pdpi = float(screen.physicalDotsPerInchX())
+        dpr = float(screen.devicePixelRatio())
+        name = screen.name()
+        geom = screen.geometry()
+
+        ref = float(SCREEN_COMP_REF_LOGICAL_DPI)
+        ratio = ref / max(ldpi, 72.0)
+        ratio = min(ratio, 1.0)
+        comp = 1.0 + (ratio - 1.0) * float(SCREEN_COMP_LDPI_BLEND)
+        if dpr > 1.01:
+            comp *= max(0.88, 1.0 - (dpr - 1.0) * float(SCREEN_COMP_DPR_EXTRA))
+        comp *= float(SCREEN_COMP_MANUAL_MULTIPLIER)
+        comp = max(float(SCREEN_COMP_MIN), min(1.0, comp))
+
+        self._screen_comp_last_meta = {
+            "name": name,
+            "logical_dpi_x": ldpi,
+            "physical_dpi_x": pdpi,
+            "device_pixel_ratio": dpr,
+            "geometry": geom,
+            "compensation": comp,
+        }
+        return comp
+
+    def _update_screen_compensation_scale(self):
+        new = float(self._get_screen_compensation_scale())
+        old = float(getattr(self, "_screen_compensation_scale", 1.0) or 1.0)
+        self._screen_compensation_scale = new
+
+        meta = getattr(self, "_screen_comp_last_meta", {}) or {}
+        sig = (
+            meta.get("name"),
+            round(float(meta.get("logical_dpi_x", 0)), 2),
+            round(float(meta.get("physical_dpi_x", 0)), 2),
+            round(float(meta.get("device_pixel_ratio", 0)), 3),
+            meta.get("geometry"),
+            round(new, 4),
+        )
+        if sig != getattr(self, "_last_screen_comp_sig", None):
+            self._last_screen_comp_sig = sig
+            print(
+                "[screen_comp]",
+                f"screen={meta.get('name')!r}",
+                f"logicalDpiX={meta.get('logical_dpi_x')}",
+                f"physicalDpiX={meta.get('physical_dpi_x')}",
+                f"dpr={meta.get('device_pixel_ratio')}",
+                f"geometry={meta.get('geometry')}",
+                f"compensation={meta.get('compensation')}",
+                sep=" | ",
+            )
+
+        if abs(new - old) > 1e-5:
+            if not getattr(self, "_user_edited_preview", False) and not getattr(
+                self, "_preview_manual_mode", False
+            ):
+                try:
+                    self.refresh_preview(force=True)
+                except Exception:
+                    pass
+
+    def _logical_preview_size(self):
+        """Стабильный логический размер предпросмотра (тот же эталон, что и PRINT_VIRTUAL_W в печати)."""
+        w_mm = float(getattr(self, "label_w_mm", 58.0) or 58.0)
+        h_mm = float(getattr(self, "label_h_mm", 80.0) or 80.0)
+        if w_mm <= 1e-9:
+            w_mm = 58.0
+        ref_w = 450
+        ref_h = int(round(ref_w * (h_mm / w_mm)))
+        return ref_w, max(180, ref_h)
+
+    def _fit_label_preview_graphics(self):
+        """Вписывает логическую этикетку в область view; масштаб ≤ 1, шрифты документа не трогаем."""
+        if not getattr(self, "preview_view", None):
+            return
+        lw, lh = self._logical_preview_size()
+        if hasattr(self, "_preview_scene"):
+            self._preview_scene.setSceneRect(0.0, 0.0, float(lw), float(lh))
+        if hasattr(self, "_preview_proxy"):
+            self._preview_proxy.setPos(0.0, 0.0)
+
+        vw = max(2, self.preview_view.viewport().width())
+        vh = max(2, self.preview_view.viewport().height())
+        s = min(vw / float(lw), vh / float(lh))
+        s = min(float(s), 1.0)
+
+        self.preview_view.resetTransform()
+        if s > 0:
+            self.preview_view.scale(s, s)
+        self.preview_view.centerOn(lw * 0.5, lh * 0.5)
+
     def _resize_label_preview(self):
         if not hasattr(self, "preview_wrap"):
             return
 
-        rect = self.preview_wrap.contentsRect()
-        avail_w = rect.width()
-        avail_h = rect.height()
-        if avail_w < 50 or avail_h < 50:
-            return
+        self._update_screen_compensation_scale()
 
-        # Общая система масштаба для всех форматов:
-        # сравниваем реальные размеры этикеток относительно максимального формата.
-        max_w_mm = 70.0
-        max_h_mm = 80.0
+        # Документ: фиксированный логический размер области; масштаб шрифта — _effective_preview_font_scale().
+        self._preview_scale = 1.0
 
-        margin_w = 28
-        margin_h = 28
+        lw, lh = self._logical_preview_size()
+        self.preview.setFixedSize(lw, lh)
 
-        px_per_mm = min(
-            (avail_w - margin_w) / max_w_mm,
-            (avail_h - margin_h) / max_h_mm
-        )
+        if hasattr(self, "_preview_scene"):
+            self._preview_scene.setSceneRect(0.0, 0.0, float(lw), float(lh))
+        if hasattr(self, "_preview_proxy"):
+            self._preview_proxy.setPos(0.0, 0.0)
 
-        target_w = int(round(self.label_w_mm * px_per_mm))
-        target_h = int(round(self.label_h_mm * px_per_mm))
-
-        target_w = max(260, target_w)
-        target_h = max(260, target_h)
-
-        # Локальный масштаб только для preview (не влияет на печать).
-        # Делаем шрифт чуть меньше на небольших экранах, пропорционально размеру preview.
-        preview_ref_w = 450.0
-        scale = float(target_w) / preview_ref_w if preview_ref_w > 0 else 1.0
-        self._preview_scale = max(0.65, min(1.0, scale))
-
-        self.preview.setFixedSize(target_w, target_h)
+        QTimer.singleShot(0, self._fit_label_preview_graphics)
     def _on_label_size_changed(self, index):
         sizes = {0: (58.0, 80.0), 1: (58.0, 60.0), 2: (70.0, 70.0), 3: (70.0, 70.0)}
         self.label_w_mm, self.label_h_mm = sizes.get(index, (58.0, 80.0))
@@ -3541,7 +3690,7 @@ class MirlisMarkApp(QWidget):
         try:
             self.preview.blockSignals(True)
             font_family = self.font_combo.currentFont().family()
-            preview_scale = getattr(self, "_preview_scale", 1.0) or 1.0
+            preview_scale = self._effective_preview_font_scale()
             effective_base = float(self._base_font_size) * float(preview_scale)
 
             default_font = QFont(font_family, max(1, int(round(effective_base))))
@@ -3594,7 +3743,7 @@ class MirlisMarkApp(QWidget):
         try:
             self.preview.blockSignals(True)
             font_family = self.font_combo.currentFont().family()
-            preview_scale = getattr(self, "_preview_scale", 1.0) or 1.0
+            preview_scale = self._effective_preview_font_scale()
             effective_base_font = float(self._base_font_size) * float(preview_scale)
             fmt_base = QTextCharFormat()
             fmt_base.setFontFamily(font_family)
@@ -3835,6 +3984,10 @@ class MirlisMarkApp(QWidget):
         if size <= 0:
             size = float(self._base_font_size)
 
+        eff = self._effective_preview_font_scale()
+        if eff > 1e-6:
+            size = float(size) / eff
+
         size_int = int(round(size))
         if size_int <= 0:
             size_int = self._base_font_size
@@ -3862,7 +4015,7 @@ class MirlisMarkApp(QWidget):
     def _change_font_size(self, delta):
         self._base_font_size = max(8, min(72, self._base_font_size + delta))
         fmt = QTextCharFormat()
-        fmt.setFontPointSize(float(self._base_font_size))
+        fmt.setFontPointSize(float(self._base_font_size) * self._effective_preview_font_scale())
         self._merge_format_on_selection(fmt)
         if hasattr(self, "font_size_combo"):
             self.font_size_combo.blockSignals(True)
@@ -3880,7 +4033,7 @@ class MirlisMarkApp(QWidget):
         size = max(8, min(72, size))
         self._base_font_size = size
         fmt = QTextCharFormat()
-        fmt.setFontPointSize(float(size))
+        fmt.setFontPointSize(float(size) * self._effective_preview_font_scale())
         self._merge_format_on_selection(fmt)
         if hasattr(self, "font_size_combo"):
             self.font_size_combo.blockSignals(True)
@@ -3939,15 +4092,55 @@ class MirlisMarkApp(QWidget):
 
         doc = self.preview.document().clone()
 
-        vp_w = self.preview.viewport().width()
-        vp_h = self.preview.viewport().height()
+        # Печать должна быть одинаковой на любом мониторе/диагонали/DPI.
+        # Не используем self.preview.viewport(), потому что его размер зависит от окна
+        # и от системного масштабирования Windows, из-за чего итоговая печать "плывёт".
+        # Используем фиксированный виртуальный канвас; компенсация экрана уже в pt документа
+        # (через _effective_preview_font_scale), здесь снимаем только «оконный» _preview_scale, если ≠1.
+        PRINT_VIRTUAL_W = 450.0
+        print_virtual_h = PRINT_VIRTUAL_W * (h_mm / w_mm) if w_mm > 0 else PRINT_VIRTUAL_W
 
-        doc.setPageSize(QSizeF(vp_w, vp_h))
+        preview_scale = float(getattr(self, "_preview_scale", 1.0)) or 1.0
+        if preview_scale > 0 and abs(preview_scale - 1.0) > 1e-6:
+            blk = doc.begin()
+            while blk.isValid():
+                it = blk.begin()
+                while not it.atEnd():
+                    frag = it.fragment()
+                    if frag.isValid():
+                        old_pt = frag.charFormat().fontPointSize()
+                        if old_pt > 0:
+                            cur = QTextCursor(doc)
+                            cur.setPosition(frag.position())
+                            cur.setPosition(
+                                frag.position() + frag.length(),
+                                QTextCursor.KeepAnchor,
+                            )
+                            fmt = QTextCharFormat()
+                            fmt.setFontPointSize(old_pt * (1.0 / preview_scale))
+                            cur.mergeCharFormat(fmt)
+                    it += 1
+                blk = blk.next()
+            df = doc.defaultFont()
+            if df.pointSizeF() > 0:
+                nf = QFont(df)
+                nf.setPointSizeF(df.pointSizeF() * (1.0 / preview_scale))
+                doc.setDefaultFont(nf)
 
-        scale_x = w_px / vp_w
-        scale_y = h_px / vp_h
+        doc.setPageSize(QSizeF(PRINT_VIRTUAL_W, print_virtual_h))
+        # Клон мог унаследовать textWidth от QTextEdit (viewport); фиксируем под виртуальный канвас.
+        doc.setTextWidth(PRINT_VIRTUAL_W)
 
+        scale_x = w_px / PRINT_VIRTUAL_W
+        scale_y = h_px / print_virtual_h
+
+        # Только QImage (не QPixmap): явно фиксированный DPI и DPR=1, без привязки к экрану.
         img = QImage(w_px, h_px, QImage.Format_RGB32)
+        if hasattr(img, "setDevicePixelRatio"):
+            img.setDevicePixelRatio(1.0)
+        _dpm_96 = int(round(96 * 1000.0 / 25.4))
+        img.setDotsPerMeterX(_dpm_96)
+        img.setDotsPerMeterY(_dpm_96)
         img.fill(QColor(255, 255, 255))
 
         painter = QPainter(img)
