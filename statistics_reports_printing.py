@@ -330,13 +330,21 @@ class _MiniBarChart(QWidget):
                 s = (raw or "").strip()
                 return bool(len(s) == 5 and s[2] == "." and s[:2].isdigit() and s[3:].isdigit())
 
+            def _is_hour_label(raw: str) -> bool:
+                s = (raw or "").strip()
+                return bool(len(s) == 2 and s.isdigit() and 0 <= int(s) <= 23)
+
             # Special, predictable strategy for "Динамика по дням":
             # - show label under EACH bar (requirement for print)
             # Additionally: keep formatting dd.mm -> day number.
             is_by_days = (n > 0) and all(_is_day_label(str(x)) for x in labs)
+            is_by_hours = (n == 24) and all(_is_hour_label(str(x)) for x in labs)
             x_font = _font_bar(8, 600)
             if is_by_days and n >= 20:
                 # More labels -> slightly smaller font to keep under-bar dates readable on A4.
+                x_font = _font_bar(7, 650)
+            if is_by_hours:
+                # Hours chart must always show ALL 24 labels: 00..23
                 x_font = _font_bar(7, 650)
             x_fm = QFontMetrics(x_font)
             x_label_h = max(18, int(x_fm.height()) + 8)
@@ -362,7 +370,9 @@ class _MiniBarChart(QWidget):
             n_layout = max(n, int(self._layout_bar_count)) if self._layout_bar_count else n
             n_layout = max(1, n_layout)
 
-            fill_to_width = (n_layout > n) and (n <= 14)
+            # Hours chart (00..23) must be categorical with uniform positions across the plot.
+            # Otherwise, when callers pass layout_bar_count=30, the last hour label can look "detached".
+            fill_to_width = ((n_layout > n) and (n <= 14)) or bool(is_by_hours)
             if fill_to_width:
                 cell_w = float(max(1, plot_bars.width())) / float(max(1, n))
                 # Keep bars pleasantly wide but not "full cell" (leave some breathing room).
@@ -421,7 +431,7 @@ class _MiniBarChart(QWidget):
             min_cell_w = float(max_lab_w + 6)  # padding inside the cell
             width_based_every = max(1, int(math.ceil(min_cell_w / step_px)))
 
-            if is_by_days:
+            if is_by_days or is_by_hours:
                 show_every = 1
             else:
                 show_every = width_based_every
