@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import math
+from datetime import datetime, date
 from statistics_data import PrintRecord, normalize_stat_key, compute_shift_totals
 
 from PyQt5.QtCore import Qt, QRect, QSize, QPointF
@@ -318,13 +319,11 @@ class _MiniBarChart(QWidget):
 
             def _format_x_label(raw: str) -> str:
                 """
-                For "Динамика по дням" labels (expected 'dd.mm') render only day of month.
-                Keep other label kinds intact (hours '00', week ranges 'dd.mm–dd.mm', etc.).
+                Report X-axis labels:
+                - keep full 'dd.mm' (with leading zeros) for day buckets
+                - keep other label kinds intact (hours '00', week ranges 'dd.mm–dd.mm', etc.)
                 """
                 s = (raw or "").strip()
-                if len(s) == 5 and s[2] == "." and s[:2].isdigit() and s[3:].isdigit():
-                    day = s[:2].lstrip("0") or "0"
-                    return day
                 return s
 
             def _is_day_label(raw: str) -> bool:
@@ -355,9 +354,27 @@ class _MiniBarChart(QWidget):
                 axis_w = max(axis_w, 36)
 
             plot_bars = plot_frame.adjusted(axis_w, 0, -axis_w, 0)
+
+            # --- Adaptive bar density for report preview/print ---
+            # Some sections pass layout_bar_count (e.g. 30) to keep stable sizing across chunks.
+            # For short periods this can make bars too thin and leave a large empty area on the right.
+            # When actual bar count is small, fill the available width by treating it as an n-cell grid.
             n_layout = max(n, int(self._layout_bar_count)) if self._layout_bar_count else n
             n_layout = max(1, n_layout)
-            bw = max(8, int((plot_bars.width() - gap * (n_layout - 1)) / n_layout))
+
+            fill_to_width = (n_layout > n) and (n <= 14)
+            if fill_to_width:
+                cell_w = float(max(1, plot_bars.width())) / float(max(1, n))
+                # Keep bars pleasantly wide but not "full cell" (leave some breathing room).
+                bw = max(10, int(cell_w * 0.78))
+                bw = min(bw, int(cell_w) - 2) if int(cell_w) >= 12 else bw
+                gap = max(4, int(max(0.0, cell_w - float(bw))))
+            else:
+                # Classic layout: honor n_layout (can be > n to keep chunk sizing stable).
+                # Must be safe for any n (including 30) and never reference bw before computing it.
+                bw = int((plot_bars.width() - gap * (n_layout - 1)) / n_layout) if n_layout > 1 else int(plot_bars.width())
+                bw = max(4, bw)
+                cell_w = float(max(1, bw + gap))
 
             plot_h = max(1, plot_bars.height() - 4)
             baseline_y = plot_bars.bottom()
@@ -394,7 +411,7 @@ class _MiniBarChart(QWidget):
                 p.setPen(Qt.NoPen)
 
             # Compute a stable show_every once (based on real bar step and label text width).
-            step_px = float(max(1, bw + gap))
+            step_px = float(max(1, cell_w))
             max_lab_w = 0
             for raw in labs:
                 t = _format_x_label(str(raw))
@@ -416,7 +433,10 @@ class _MiniBarChart(QWidget):
             for i in range(n):
                 v = vals[i]
                 bh = int((float(v) / float(y_scale)) * float(plot_h))
-                x = plot_bars.left() + i * (bw + gap)
+                if fill_to_width:
+                    x = int(plot_bars.left() + float(i) * cell_w + (cell_w - float(bw)) * 0.5)
+                else:
+                    x = plot_bars.left() + i * (bw + gap)
                 y = baseline_y - bh
                 # Color logic aligned to dashboard:
                 # - warm gradient (week/month/custom) for time chart
@@ -443,8 +463,12 @@ class _MiniBarChart(QWidget):
                 lab = _format_x_label(str(labs[i])) if show_this else ""
                 p.setPen(QColor(_C_SUB))
                 p.setFont(x_font)
-                cell_left = x - (gap // 2)
-                cell_right = cell_left + (bw + gap)
+                if fill_to_width:
+                    cell_left = int(plot_bars.left() + float(i) * cell_w)
+                    cell_right = int(plot_bars.left() + float(i + 1) * cell_w)
+                else:
+                    cell_left = x - (gap // 2)
+                    cell_right = cell_left + (bw + gap)
                 if i == 0:
                     cell_left = plot_bars.left()
                 if i == n - 1:
@@ -1156,23 +1180,40 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
             labels = [f"{h:02d}" for h in range(24)]
             return ("По часам", labels, buckets, False)
 
-        # Determine date range for day-bucketing.
+        # Determine FULL date range for day-bucketing (must include zero days).
+        # Important: records list is already filtered by the selected period.
+        # For fixed presets (7/30 days) we align to the same "now" anchor as the UI filter:
+        # otherwise a single printed day would shrink the chart to 1 bar.
+        now_d = datetime.now().date()
         max_d = max(r.dt for r in records).date()
         min_d = min(r.dt for r in records).date()
 
+        def _parse_custom_range_from_subtitle() -> tuple[date | None, date | None]:
+            # Expected: "dd.mm.yyyy HH:MM — dd.mm.yyyy HH:MM"
+            s = (options.period_subtitle or "").strip()
+            if "—" not in s:
+                return (None, None)
+            try:
+                a, b = [x.strip() for x in s.split("—", 1)]
+                da = datetime.strptime(a, "%d.%m.%Y %H:%M").date()
+                db = datetime.strptime(b, "%d.%m.%Y %H:%M").date()
+                return (da, db)
+            except Exception:
+                return (None, None)
+
         if pl == "7 дней":
-            start_d = max_d
-            start_d = start_d.fromordinal(start_d.toordinal() - 6)
-            end_d = max_d
+            end_d = now_d
+            start_d = end_d.fromordinal(end_d.toordinal() - 6)
             title = "Динамика по дням"
         elif pl == "30 дней":
-            start_d = max_d.fromordinal(max_d.toordinal() - 29)
-            end_d = max_d
+            end_d = now_d
+            start_d = end_d.fromordinal(end_d.toordinal() - 29)
             title = "Динамика по дням"
         else:
             # custom "Период": всегда по дням (как в UI); длинный диапазон — через continuation страниц.
-            start_d = min_d
-            end_d = max_d
+            cs, ce = _parse_custom_range_from_subtitle()
+            start_d = cs or min_d
+            end_d = ce or max_d
             title = "Динамика по дням"
 
         # day buckets for [start_d..end_d]

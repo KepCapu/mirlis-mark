@@ -102,6 +102,25 @@ def _dashboard_io_tile_button_stylesheet() -> str:
     )
 
 
+def _dashboard_io_tile_button_disabled_stylesheet() -> str:
+    # Disabled-like (grey) style, but we keep the button clickable.
+    return (
+        "QPushButton {"
+        "background: #f8fafc;"
+        "border: 1px solid #e5e7eb;"
+        "border-radius: 12px;"
+        f"font-family: {_STATS_FONT_FAMILY};"
+        "font-size: 14px;"
+        "font-weight: 600;"
+        f"color: {_C_MUTED};"
+        "padding: 10px 14px;"
+        "text-align: left;"
+        "}"
+        "QPushButton:hover { background: #f8fafc; border-color: #e5e7eb; }"
+        "QPushButton:pressed { background: #f1f5f9; border-color: #e5e7eb; }"
+    )
+
+
 # Внутренняя зона графика (топ продукты / сотрудники / цехи): мягкая рамка и hover.
 _STATS_CHART_INNER_QSS = """
 QFrame#StatsChartInner {
@@ -1778,7 +1797,8 @@ class StatisticsPage(QWidget):
         self.content_stack.addWidget(self.empty_state_page)
         self.content_stack.addWidget(self.dashboard_widget)
         self.content_stack.addWidget(self.detail_view)
-        self.content_stack.setCurrentWidget(self.empty_state_page)
+        # Dashboard-структура должна быть видна всегда; empty-state показываем внутри dashboard ниже основных блоков.
+        self.content_stack.setCurrentWidget(self.dashboard_widget)
 
         self.refresh_from_archive()
 
@@ -1840,14 +1860,20 @@ class StatisticsPage(QWidget):
                 self.print_reports_btn.show()
         except Exception:
             pass
-        if self._dashboard_records:
-            self.content_stack.setCurrentWidget(self.dashboard_widget)
-        else:
-            self.content_stack.setCurrentWidget(self.empty_state_page)
+        self.content_stack.setCurrentWidget(self.dashboard_widget)
         self.detail_mode_changed.emit(False)
 
     def _on_print_reports_clicked(self) -> None:
         from statistics_reports_printing import run_print_reports_flow
+
+        # При нулевой статистике: кнопка выглядит disabled, но остаётся кликабельной и показывает подсказку.
+        if not (self._dashboard_records or []):
+            QMessageBox.information(
+                self,
+                "Печать отчётов",
+                "Для печати отчётов необходимо сначала напечатать этикетки или добавить источники данных.",
+            )
+            return
 
         try:
             p = (self._period or "day").strip().lower()
@@ -2443,8 +2469,12 @@ class StatisticsPage(QWidget):
 
     def set_has_data(self, has_data: bool):
         # kept for backwards-compat calls from main.py; actual state is driven by records
-        if not has_data:
-            self.content_stack.setCurrentWidget(self.empty_state_page)
+        # Не переключаем экран на отдельную empty-state страницу:
+        # dashboard остаётся видимым, а empty-state показывается ниже основных карточек.
+        try:
+            self.refresh_dashboard()
+        except Exception:
+            pass
 
     # ----- UI builders -----
     def _build_empty_state(self) -> QWidget:
@@ -2483,9 +2513,11 @@ class StatisticsPage(QWidget):
 
         outer = QVBoxLayout()
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addStretch(1)
+        # Поднимаем пустое состояние выше внутри контейнера:
+        # верхний stretch меньше, нижний — больше, при этом весь блок остаётся единым и центрируется по горизонтали.
+        outer.addStretch(0)
         outer.addWidget(w, 0, Qt.AlignHCenter)
-        outer.addStretch(1)
+        outer.addStretch(2)
         container = QWidget()
         container.setLayout(outer)
         container.setStyleSheet("background: transparent; border: none;")
@@ -2494,6 +2526,12 @@ class StatisticsPage(QWidget):
     def _build_empty_state_page(self) -> QWidget:
         surface = QFrame()
         surface.setStyleSheet("background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px;")
+        # Пустое состояние — крупный нижний блок. Делаем его выше примерно на 20%,
+        # не масштабируя контент: центрирование обеспечивается layout'ом внутри.
+        try:
+            surface.setMinimumHeight(550)  # было 500 → стало ещё выше (~+10%)
+        except Exception:
+            pass
         lay = QVBoxLayout(surface)
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(0)
@@ -2515,6 +2553,7 @@ class StatisticsPage(QWidget):
         grid.setRowStretch(1, 0)
         grid.setRowStretch(2, 1)
         grid.setRowStretch(3, 1)
+        grid.setRowStretch(4, 0)
 
         # 12-column grid:
         # top row -> 4 / 4 / 2 / 2
@@ -2778,6 +2817,14 @@ class StatisticsPage(QWidget):
             _make_view_toggle(lambda: self.workshops_stack.setCurrentIndex(0), lambda: self.workshops_stack.setCurrentIndex(1))
         )
 
+        # Empty-state как дополнительный блок НИЖЕ основных карточек (не вместо них).
+        self.dashboard_empty_state_surface = self._build_empty_state_page()
+        try:
+            self.dashboard_empty_state_surface.setVisible(False)
+        except Exception:
+            pass
+        grid.addWidget(self.dashboard_empty_state_surface, 4, 0, 1, 12)
+
         return w
 
     # ----- Data & refresh -----
@@ -2796,7 +2843,58 @@ class StatisticsPage(QWidget):
             if self._detail_mode:
                 self.leave_statistics_detail()
             else:
-                self.content_stack.setCurrentWidget(self.empty_state_page)
+                self.content_stack.setCurrentWidget(self.dashboard_widget)
+
+            # Кнопка «Печать отчётов» на месте, но выглядит disabled (и даёт подсказку по клику).
+            try:
+                if getattr(self, "print_reports_btn", None) is not None:
+                    self.print_reports_btn.setStyleSheet(_dashboard_io_tile_button_disabled_stylesheet())
+            except Exception:
+                pass
+
+            # KPI всегда видны; при отсутствии данных показываем нули.
+            try:
+                self.kpi_ops.set_value(0)
+                self.kpi_labels.set_value(0)
+                self.kpi_day_shift.set_value(0)
+                self.kpi_night_shift.set_value(0)
+            except Exception:
+                pass
+
+            # Нижние аналитические блоки скрываем полностью (без пустых рамок и отступов).
+            try:
+                if getattr(self, "time_card", None) is not None:
+                    self.time_card.setVisible(False)
+                if getattr(self, "top_products_card", None) is not None:
+                    self.top_products_card.setVisible(False)
+                if getattr(self, "top_staff_card", None) is not None:
+                    self.top_staff_card.setVisible(False)
+                if getattr(self, "workshops_card", None) is not None:
+                    self.workshops_card.setVisible(False)
+            except Exception:
+                pass
+
+            # Empty-state ниже основных карточек.
+            try:
+                if getattr(self, "dashboard_empty_state_surface", None) is not None:
+                    self.dashboard_empty_state_surface.setVisible(True)
+            except Exception:
+                pass
+
+            # На всякий случай очищаем данные графиков (виджетов может не быть при скрытии).
+            try:
+                self.time_chart.set_data([], [], bar_color=QColor("#93c5fd"))
+            except Exception:
+                pass
+            try:
+                self.top_products_chart.set_data([], [], bar_color=QColor("#facc15"))
+                self.top_products_pie.set_data([], [])
+                self.top_staff_chart.set_data([], [], bar_color=QColor("#facc15"))
+                self.top_staff_pie.set_data([], [])
+                self.workshops_chart.set_data([], [], bar_color=QColor("#93c5fd"))
+                self.workshops_pie.set_data([], [])
+            except Exception:
+                pass
             return
         self._dashboard_records = records
         if self._detail_mode:
@@ -2808,6 +2906,33 @@ class StatisticsPage(QWidget):
             self.content_stack.setCurrentWidget(self.detail_view)
         else:
             self.content_stack.setCurrentWidget(self.dashboard_widget)
+
+        # Кнопка «Печать отчётов» в обычном стиле при наличии данных.
+        try:
+            if getattr(self, "print_reports_btn", None) is not None:
+                self.print_reports_btn.setStyleSheet(_dashboard_io_tile_button_stylesheet())
+        except Exception:
+            pass
+
+        # При наличии данных empty-state внутри dashboard не нужен.
+        try:
+            if getattr(self, "dashboard_empty_state_surface", None) is not None:
+                self.dashboard_empty_state_surface.setVisible(False)
+        except Exception:
+            pass
+
+        # При наличии данных нижние аналитические блоки должны быть видны.
+        try:
+            if getattr(self, "time_card", None) is not None:
+                self.time_card.setVisible(True)
+            if getattr(self, "top_products_card", None) is not None:
+                self.top_products_card.setVisible(True)
+            if getattr(self, "top_staff_card", None) is not None:
+                self.top_staff_card.setVisible(True)
+            if getattr(self, "workshops_card", None) is not None:
+                self.workshops_card.setVisible(True)
+        except Exception:
+            pass
 
         ops = len(records)
         labels_total = sum(int(r.copies) for r in records)
