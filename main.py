@@ -482,10 +482,14 @@ class CustomDateTimePicker(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Ensure eventFilter can safely run during early init.
+        self._popup = None
         self._date = QDate.currentDate()
         self._time = QTime.currentTime()
-        self._popup_visible = False
         self._cal_view = "day"  # day | month | year
+        self._popup_hidden_at = 0.0
+        self._closing_by_trigger = False
+        self._trigger_pressed = False
 
         # --- триггер как у QComboBox ---
         combo_btn_path = resource_path("assets/combo-btn.svg").replace("\\", "/")
@@ -526,6 +530,8 @@ class CustomDateTimePicker(QWidget):
 
         # --- popup ---
         self._popup = QFrame(self, Qt.Popup)
+        # Needed to detect Qt.Popup auto-hide and prevent immediate reopen on the same click.
+        self._popup.installEventFilter(self)
         self._popup.setStyleSheet(
             "QFrame { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; }"
         )
@@ -943,22 +949,73 @@ class CustomDateTimePicker(QWidget):
 
     # ---------- event filter ----------
     def eventFilter(self, obj, event):
+        pop = getattr(self, "_popup", None)
+        if pop is None:
+            return super().eventFilter(obj, event)
+
+        # Qt.Popup может сам закрывать popup на клике "вне".
+        # Фиксируем момент скрытия, чтобы не допустить переоткрытия тем же кликом.
+        if obj is pop and event.type() == QEvent.Hide:
+            # Если мы закрыли popup сами по клику на триггер — не включаем guard,
+            # иначе следующий клик "сразу открыть" может быть ошибочно заблокирован.
+            if getattr(self, "_closing_by_trigger", False):
+                self._closing_by_trigger = False
+            else:
+                self._popup_hidden_at = time.monotonic()
+            return super().eventFilter(obj, event)
+
         if event.type() == QEvent.MouseButtonPress and obj in (
             self._trigger_frame,
             self._text_label,
             self._drop_icon,
         ):
-            self._toggle_popup()
+            # Строгий toggle как у остальных dropdown:
+            # если popup открыт — повторный клик по триггеру всегда закрывает его.
+            if pop.isVisible():
+                self._closing_by_trigger = True
+                pop.hide()
+                return True
+
+            # Если popup был скрыт совсем недавно (~250 мс назад),
+            # значит этот же клик уже привёл к автозакрытию через Qt.Popup,
+            # и НЕ нужно открывать popup снова.
+            if (time.monotonic() - float(getattr(self, "_popup_hidden_at", 0.0))) < 0.25:
+                return True
+
+            # Важно: Qt.Popup может закрываться по MouseButtonRelease, если popup показан между press/release.
+            # Поэтому помечаем нажатие, а открываем ПОСЛЕ release (ниже).
+            self._trigger_pressed = True
             return True
+
+        if event.type() == QEvent.MouseButtonRelease and obj in (
+            self._trigger_frame,
+            self._text_label,
+            self._drop_icon,
+        ):
+            if not getattr(self, "_trigger_pressed", False):
+                return super().eventFilter(obj, event)
+            self._trigger_pressed = False
+
+            # Если popup был скрыт совсем недавно (~250 мс назад), не переоткрываем тем же кликом.
+            if (time.monotonic() - float(getattr(self, "_popup_hidden_at", 0.0))) < 0.25:
+                return True
+
+            # Открываем после release (следующим тиком), чтобы не попасть под авто-close Qt.Popup.
+            QTimer.singleShot(0, self._toggle_popup)
+            return True
+
         return super().eventFilter(obj, event)
 
     # ---------- popup toggle ----------
     def _toggle_popup(self):
-        if self._popup.isVisible():
-            self._popup.hide()
+        pop = getattr(self, "_popup", None)
+        if pop is None:
+            return
+        if pop.isVisible():
+            pop.hide()
         else:
-            self._popup.adjustSize()
-            popup_h = self._popup.height() or self._popup.sizeHint().height() or 320
+            pop.adjustSize()
+            popup_h = pop.height() or pop.sizeHint().height() or 320
             win = self.window()
             win_rect = win.frameGeometry()
             f = self._trigger_frame
@@ -973,8 +1030,8 @@ class CustomDateTimePicker(QWidget):
             else:
                 pos = f.mapToGlobal(QPoint(0, 0))
                 pos.setY(btn_top_global - popup_h - margin)
-            self._popup.move(pos)
-            self._popup.show()
+            pop.move(pos)
+            pop.show()
 
     # ---------- public API ----------
     def date(self) -> QDate:
