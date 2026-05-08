@@ -68,6 +68,7 @@ from PyQt5.QtGui import (
     QIcon,
     QPixmap,
     QFont,
+    QIntValidator,
     QTextCharFormat,
     QTextBlockFormat,
     QTextCursor,
@@ -687,20 +688,31 @@ class CustomDateTimePicker(QWidget):
         btn_m_down.setAutoRepeatInterval(60)
         btn_m_down.clicked.connect(lambda: self._step_time("m", -1))
 
-        self._hour_label = QLabel()
+        # Время: оставляем тот же внешний вид, но добавляем ручной ввод (клавиатура).
+        time_input_style = (
+            "font-size: 28px; font-weight: 700; color: #111827; "
+            "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; "
+            "padding: 0px;"
+        )
+        self._hour_label = QLineEdit()
         self._hour_label.setAlignment(Qt.AlignCenter)
-        self._hour_label.setMinimumSize(72, 40)
-        self._hour_label.setStyleSheet(
-            "font-size: 28px; font-weight: 700; color: #111827; "
-            "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;"
-        )
-        self._min_label = QLabel()
+        self._hour_label.setFixedSize(72, 40)
+        self._hour_label.setMaxLength(2)
+        self._hour_label.setValidator(QIntValidator(0, 23, self._hour_label))
+        self._hour_label.setStyleSheet(time_input_style)
+        # Мгновенное обновление предпросмотра при валидном вводе (без автоформатирования во время набора).
+        self._hour_label.textEdited.connect(lambda txt: self._on_time_text_live("h", txt))
+        self._hour_label.editingFinished.connect(lambda: self._apply_time_input("h"))
+
+        self._min_label = QLineEdit()
         self._min_label.setAlignment(Qt.AlignCenter)
-        self._min_label.setMinimumSize(72, 40)
-        self._min_label.setStyleSheet(
-            "font-size: 28px; font-weight: 700; color: #111827; "
-            "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;"
-        )
+        self._min_label.setFixedSize(72, 40)
+        self._min_label.setMaxLength(2)
+        self._min_label.setValidator(QIntValidator(0, 59, self._min_label))
+        self._min_label.setStyleSheet(time_input_style)
+        self._min_label.textEdited.connect(lambda txt: self._on_time_text_live("m", txt))
+        self._min_label.editingFinished.connect(lambda: self._apply_time_input("m"))
+
         colon = QLabel(":")
         colon.setAlignment(Qt.AlignCenter)
         colon.setFixedSize(24, 40)
@@ -934,6 +946,82 @@ class CustomDateTimePicker(QWidget):
     def _refresh_time_labels(self):
         self._hour_label.setText(f"{self._time.hour():02d}")
         self._min_label.setText(f"{self._time.minute():02d}")
+
+    def _apply_time_input(self, part: str):
+        """
+        Применяет ручной ввод часа/минуты:
+        - диапазоны: 00–23 и 00–59
+        - формат: всегда 2 цифры
+        - при некорректном вводе: возвращаем последнее корректное значение
+        """
+        h = self._time.hour()
+        m = self._time.minute()
+
+        if part == "h":
+            raw = self._hour_label.text().strip()
+            try:
+                v = int(raw) if raw != "" else None
+            except Exception:
+                v = None
+            if v is None:
+                self._refresh_time_labels()
+                return
+            v = max(0, min(23, v))
+            h = v
+        else:
+            raw = self._min_label.text().strip()
+            try:
+                v = int(raw) if raw != "" else None
+            except Exception:
+                v = None
+            if v is None:
+                self._refresh_time_labels()
+                return
+            v = max(0, min(59, v))
+            m = v
+
+        self._time = QTime(h, m)
+        self._refresh_time_labels()
+        self._update_btn_text()
+        self.dateTimeChanged.emit()
+
+    def _on_time_text_live(self, part: str, txt: str):
+        """
+        Живое обновление предпросмотра при наборе:
+        - обновляем итоговую дату/время сразу, как только ввод можно интерпретировать
+        - НЕ форматируем поле (00/01/...) во время набора, чтобы не мешать сценарию '1' -> '10'
+        """
+        s = (txt or "").strip()
+        if s == "":
+            return
+        # Разрешаем только цифры (валидатор обычно не пропускает другое, но на всякий случай).
+        if not s.isdigit():
+            return
+        try:
+            v = int(s)
+        except Exception:
+            return
+
+        h = self._time.hour()
+        m = self._time.minute()
+        if part == "h":
+            if 0 <= v <= 23:
+                h = v
+            else:
+                return
+        else:
+            if 0 <= v <= 59:
+                m = v
+            else:
+                return
+
+        # Чтобы не спамить лишними сигналами — обновляем только при реальном изменении.
+        if h == self._time.hour() and m == self._time.minute():
+            return
+
+        self._time = QTime(h, m)
+        self._update_btn_text()
+        self.dateTimeChanged.emit()
 
     def _step_time(self, part, delta):
         h = self._time.hour()
@@ -3644,6 +3732,13 @@ class MirlisMarkApp(QWidget):
         self.qty_input.setText(str(round(value, 3)).rstrip("0").rstrip("."))
 
     def clear_fields(self):
+        # Очистка полей означает: активной "выбранной из истории" этикетки больше нет.
+        self._selected_history_id = None
+        # Сразу снимаем подсветку в UI (иначе она останется до следующей перестройки истории).
+        try:
+            self._rebuild_history_view()
+        except Exception:
+            pass
         self.product_combo.setCurrentIndex(-1)
         self.product_combo.setEditText("")
 
@@ -3956,6 +4051,15 @@ class MirlisMarkApp(QWidget):
             return
         text, can_print = self._build_label_plain_text()
         self.print_btn.setEnabled(can_print)
+
+        # Если текущая этикетка "пустая" (нет продукта / стандартное сообщение),
+        # то история не должна держать подсветку выбранной карточки.
+        # Важно: делаем это ДО ранних return (например, когда preview редактировали вручную).
+        if getattr(self, "_selected_history_id", None) is not None:
+            t = (text or "").strip()
+            if (not t) or (t == "Выберите продукт."):
+                self._selected_history_id = None
+                self._rebuild_history_view()
 
         if self._user_edited_preview:
             return
