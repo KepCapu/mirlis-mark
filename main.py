@@ -1252,7 +1252,7 @@ class MirlisMarkApp(QWidget):
         self._excel_autorefresh_timer.start(60_000)
 
         # архив напечатанных этикеток: очистка старше 31 дня при старте
-        self._cleanup_old_label_archives(days=31)
+        self._cleanup_old_label_archives(days=365)
 
         self.refresh_preview()
 
@@ -4501,7 +4501,7 @@ class MirlisMarkApp(QWidget):
             s = s.replace("  ", " ")
         return s[:120].strip() or "—"
 
-    def _cleanup_old_label_archives(self, days: int = 31):
+    def _cleanup_old_label_archives(self, days: int = 365):
         root = self._labels_archive_root()
         try:
             if not os.path.isdir(root):
@@ -4523,7 +4523,7 @@ class MirlisMarkApp(QWidget):
 
     def _archive_printed_label(self, preview_text: str, entry: dict | None, copies: int):
         # очистка старых папок — при каждом сохранении
-        self._cleanup_old_label_archives(days=31)
+        self._cleanup_old_label_archives(days=365)
 
         e = entry or {}
         product = self._sanitize_filename_part(e.get("product") or e.get("product_name") or "Этикетка")
