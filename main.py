@@ -54,13 +54,15 @@ from PyQt5.QtWidgets import (
     QDialog,
     QListView,
     QScrollBar,
+    QScroller,
+    QScrollerProperties,
     QStyledItemDelegate,
     QStackedWidget,
     QGraphicsView,
     QGraphicsScene,
     QGraphicsProxyWidget,
 )
-from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRectF
+from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRectF, QEasingCurve
 from PyQt5.QtCore import QObject
 from PyQt5.QtCore import QStringListModel
 from PyQt5.QtGui import (
@@ -78,6 +80,7 @@ from PyQt5.QtGui import (
     QPainter,
     QColor,
     QBrush,
+    QRegion,
 )
 
 # PyQt5: мультимедиа
@@ -100,6 +103,48 @@ SCREEN_COMP_DPR_EXTRA = 0.12
 
 
 # -------------------- ПУТИ: ресурсы и пользовательские данные --------------------
+def _setup_auto_repeat(btn, callback, delay=400, interval=80):
+    """Auto-repeat через мышиные события + debounce (устойчив к тач-экранам)."""
+    btn.setAutoRepeat(False)
+    btn.setFocusPolicy(Qt.NoFocus)
+    btn.setContextMenuPolicy(Qt.NoContextMenu)
+
+    btn._ar_repeat = QTimer(btn)
+    btn._ar_repeat.setInterval(interval)
+    btn._ar_repeat.timeout.connect(callback)
+
+    btn._ar_delay = QTimer(btn)
+    btn._ar_delay.setSingleShot(True)
+    btn._ar_delay.setInterval(delay)
+    btn._ar_delay.timeout.connect(btn._ar_repeat.start)
+
+    # Debounce: при отпускании ждём 200мс, прежде чем реально остановить.
+    # Если за это время придёт новый press (тач-экран часто так делает) —
+    # отменяем остановку и продолжаем.
+    btn._ar_stop_debounce = QTimer(btn)
+    btn._ar_stop_debounce.setSingleShot(True)
+    btn._ar_stop_debounce.setInterval(200)
+
+    def _real_stop():
+        btn._ar_delay.stop()
+        btn._ar_repeat.stop()
+
+    btn._ar_stop_debounce.timeout.connect(_real_stop)
+
+    def _start():
+        btn._ar_stop_debounce.stop()  # отменяем отложенную остановку
+        btn._ar_delay.stop()
+        btn._ar_repeat.stop()
+        callback()
+        btn._ar_delay.start()
+
+    def _request_stop():
+        btn._ar_stop_debounce.start()
+
+    btn.pressed.connect(_start)
+    btn.released.connect(_request_stop)
+
+
 def resource_path(relative_path: str) -> str:
     """Путь к встроенному ресурсу: из исходников — от корня проекта, из exe — из sys._MEIPASS."""
     return _resource_path(relative_path)
@@ -321,36 +366,35 @@ class ComboBoxFixedArrow(QComboBox):
 
     def showPopup(self):
         super().showPopup()
-        # Важно: кастомный скроллбар и маска — только для tablet.
-        # В PC popup должен оставаться прямоугольным и использовать QSS-скроллбар.
-        try:
-            app_mode = getattr(self.window(), "app_mode", "pc")
-        except Exception:
-            app_mode = "pc"
-        if app_mode != "tablet":
-            return
-
         view = self.view()
         if view:
-            view.scrollToTop()
-            old_sb = view.verticalScrollBar()
-            if old_sb and not isinstance(old_sb, _StyledScrollBar):
-                new_sb = _StyledScrollBar(view)
-                view.setVerticalScrollBar(new_sb)
-            # скруглить углы popup-контейнера (tablet-only)
-            container = view.window()
-            if container and not container.graphicsEffect():
-                container.setWindowFlags(container.windowFlags())
-                mask_radius = 12
-                from PyQt5.QtGui import QRegion, QPainterPath
-                path = QPainterPath()
-                path.addRoundedRect(
-                    0, 0,
-                    container.width(), container.height(),
-                    mask_radius, mask_radius
-                )
-                region = QRegion(path.toFillPolygon().toPolygon())
-                container.setMask(region)
+            # Включаем тач-скролл для popup
+            scroller = QScroller.scroller(view.viewport())
+            if scroller:
+                props = scroller.scrollerProperties()
+                props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+                props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+                scroller.setScrollerProperties(props)
+            QScroller.grabGesture(view.viewport(), QScroller.LeftMouseButtonGesture)
+            view.viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+
+        # Важно: кастомный скроллбар и маска — только для tablet
+        if getattr(self, "_is_tablet_mode", False):
+            lv = self.view()
+            if lv is not None:
+                try:
+                    sb = _StyledScrollBar(lv)
+                    lv.setVerticalScrollBar(sb)
+                except Exception:
+                    pass
+                try:
+                    popup = lv.window()
+                    if popup is not None:
+                        rect = popup.rect()
+                        rounded = QRegion(rect, QRegion.Rectangle)
+                        popup.setMask(rounded)
+                except Exception:
+                    pass
 
 
 class ComboBoxPopupDown(ComboBoxFixedArrow):
@@ -662,31 +706,26 @@ class CustomDateTimePicker(QWidget):
         btn_h_up = QPushButton("▲")
         btn_h_up.setStyleSheet(arrow_style)
         btn_h_up.setCursor(Qt.PointingHandCursor)
-        btn_h_up.setAutoRepeat(True)
-        btn_h_up.setAutoRepeatDelay(400)
-        btn_h_up.setAutoRepeatInterval(100)
-        btn_h_up.clicked.connect(lambda: self._step_time("h", 1))
+        btn_h_up.setFocusPolicy(Qt.NoFocus)
+        _setup_auto_repeat(btn_h_up, lambda: self._step_time("h", 1))
+
         btn_h_down = QPushButton("▼")
         btn_h_down.setStyleSheet(arrow_style)
         btn_h_down.setCursor(Qt.PointingHandCursor)
-        btn_h_down.setAutoRepeat(True)
-        btn_h_down.setAutoRepeatDelay(400)
-        btn_h_down.setAutoRepeatInterval(100)
-        btn_h_down.clicked.connect(lambda: self._step_time("h", -1))
+        btn_h_down.setFocusPolicy(Qt.NoFocus)
+        _setup_auto_repeat(btn_h_down, lambda: self._step_time("h", -1))
+
         btn_m_up = QPushButton("▲")
         btn_m_up.setStyleSheet(arrow_style)
         btn_m_up.setCursor(Qt.PointingHandCursor)
-        btn_m_up.setAutoRepeat(True)
-        btn_m_up.setAutoRepeatDelay(400)
-        btn_m_up.setAutoRepeatInterval(60)
-        btn_m_up.clicked.connect(lambda: self._step_time("m", 1))
+        btn_m_up.setFocusPolicy(Qt.NoFocus)
+        _setup_auto_repeat(btn_m_up, lambda: self._step_time("m", 1))
+
         btn_m_down = QPushButton("▼")
         btn_m_down.setStyleSheet(arrow_style)
         btn_m_down.setCursor(Qt.PointingHandCursor)
-        btn_m_down.setAutoRepeat(True)
-        btn_m_down.setAutoRepeatDelay(400)
-        btn_m_down.setAutoRepeatInterval(60)
-        btn_m_down.clicked.connect(lambda: self._step_time("m", -1))
+        btn_m_down.setFocusPolicy(Qt.NoFocus)
+        _setup_auto_repeat(btn_m_down, lambda: self._step_time("m", -1))
 
         # Время: оставляем тот же внешний вид, но добавляем ручной ввод (клавиатура).
         time_input_style = (
@@ -1846,6 +1885,14 @@ class MirlisMarkApp(QWidget):
         self.product_combo.setInsertPolicy(QComboBox.NoInsert)
         self.product_combo.setPlaceholderText("Введите продукт или выберите из списка")
         self.product_combo.setMaxVisibleItems(8)
+        self.product_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+        scroller = QScroller.scroller(self.product_combo.view().viewport())
+        if scroller:
+            props = scroller.scrollerProperties()
+            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+            scroller.setScrollerProperties(props)
+        QScroller.grabGesture(self.product_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
         left_layout.addWidget(self.product_combo)
 
         self.product_model = QStringListModel([])
@@ -1859,41 +1906,103 @@ class MirlisMarkApp(QWidget):
         grid.setSpacing(12)
 
         col_units = QVBoxLayout()
+        col_units.setSpacing(8)
+        col_units.setContentsMargins(0, 0, 0, 0)
+        col_units.setAlignment(Qt.AlignTop)
+
         lab_units = QLabel("Ед. изм.")
         lab_units.setObjectName("FieldLabel")
-        lab_units.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lab_units.setAlignment(Qt.AlignCenter)
+        lab_units.setFixedHeight(45)
+        lab_units.setStyleSheet(
+            "#FieldLabel { background: #eef2f6; border-radius: 14px; "
+            "padding: 8px 16px; font-size: 16px; font-weight: 500; color: #1E2F45; }"
+        )
         col_units.addWidget(lab_units)
 
         self.unit_combo = ComboBoxFixedArrow()
+        self.unit_combo.setFixedHeight(45)
+        self.unit_combo.setStyleSheet(
+            "QComboBox { min-height: 45px; padding: 0 44px 0 14px; "
+            "border: 1px solid #cfd6e0; border-radius: 12px; background: #ffffff; "
+            "font-size: 14px; color: #111827; }"
+            "QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: center right; "
+            "width: 36px; border: none; background: transparent; margin-right: 4px; }"
+        )
+        self.unit_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+        scroller = QScroller.scroller(self.unit_combo.view().viewport())
+        if scroller:
+            props = scroller.scrollerProperties()
+            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+            scroller.setScrollerProperties(props)
+        QScroller.grabGesture(self.unit_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
         col_units.addWidget(self.unit_combo)
-        grid.addLayout(col_units, 1)
+        col_units.addStretch(1)
+        grid.addLayout(col_units, 2)
 
         col_qty = QVBoxLayout()
-        qty_row = QHBoxLayout()
-        qty_row.setSpacing(10)
+        col_qty.setSpacing(8)
+
+        # --- Верхний ряд: поле ввода количества (на уровне лейбла "Ед. изм.") ---
+        self.qty_input = QLineEdit()
+        self.qty_input.setPlaceholderText("Введите количество")
+        self.qty_input.setAlignment(Qt.AlignCenter)
+        self.qty_input.setStyleSheet(
+            "QLineEdit { font-size: 18px; font-weight: 700; padding: 8px 12px; }"
+            "QLineEdit:focus { border: 1px solid #6ea8fe; }"
+        )
+        self.qty_input.setMinimumHeight(64)
+        col_qty.addWidget(self.qty_input)
+
+        # --- Нижний ряд: кнопки "−" и "+" (на уровне combobox единиц) ---
+        qty_btn_row = QHBoxLayout()
+        qty_btn_row.setSpacing(10)
+        qty_btn_row.setContentsMargins(0, 0, 0, 0)
+        # Высота кнопок −/+ должна совпадать с высотой unit_combo
 
         self.minus_btn = ActionBtn("−", kind="default")
-        self.minus_btn.setFixedWidth(60)
+        self.minus_btn.setStyleSheet(
+            "#Btn_default { font-size: 26px; font-weight: 900; padding: 0px; }"
+        )
         self.minus_btn.setAutoRepeat(True)
         self.minus_btn.setAutoRepeatDelay(400)
         self.minus_btn.setAutoRepeatInterval(80)
 
-        self.qty_input = QLineEdit()
-        self.qty_input.setPlaceholderText("Введите количество")
-
         self.plus_btn = ActionBtn("+", kind="default")
-        self.plus_btn.setFixedWidth(60)
+        self.plus_btn.setStyleSheet(
+            "#Btn_default { font-size: 28px; font-weight: 900; padding: 0px; }"
+        )
         self.plus_btn.setAutoRepeat(True)
         self.plus_btn.setAutoRepeatDelay(400)
         self.plus_btn.setAutoRepeatInterval(80)
 
-        qty_row.addWidget(self.minus_btn)
-        qty_row.addWidget(self.qty_input, 1)
-        qty_row.addWidget(self.plus_btn)
-        col_qty.addLayout(qty_row)
+        self.minus_btn.clicked.connect(self.decrease_qty)
+        self.plus_btn.clicked.connect(self.increase_qty)
+        self.minus_btn.setFocusPolicy(Qt.NoFocus)
+        self.plus_btn.setFocusPolicy(Qt.NoFocus)
 
-        grid.addLayout(col_qty, 2)
+        qty_btn_row.addWidget(self.minus_btn, 1)
+        qty_btn_row.addWidget(self.plus_btn, 1)
+        col_qty.addLayout(qty_btn_row)
+
+        grid.addLayout(col_qty, 3)  # фактическое соотношение col_units:col_qty = 2:3
+
+        # Синхронизация: поле ввода — крупнее, кнопки −/+ выровнены по высоте с unit_combo
+        self.qty_input.setMinimumHeight(64)
+        self.minus_btn.setMinimumHeight(64)
+        self.plus_btn.setMinimumHeight(64)
+        self.minus_btn.setMinimumWidth(70)
+        self.plus_btn.setMinimumWidth(70)
+
+        # Выравнивание кнопок −/+ по вертикали с unit_combo (под полем qty_input).
+        # Поскольку qty_input выше unit_combo, qty_btn_row нужно прижать к низу — добавим stretch сверху qty_btn_row.
+        qty_btn_row.setAlignment(Qt.AlignBottom)
+
         left_layout.addLayout(grid)
+
+        # Опустить блоки "Изготовил" / "Цех" / "Дата и время" ниже — добавим вертикальный отступ
+        left_layout.addSpacing(12)
 
         lab_made = QLabel("Изготовил")
         lab_made.setObjectName("FieldLabel")
@@ -1903,6 +2012,14 @@ class MirlisMarkApp(QWidget):
         self.made_combo = ComboBoxFixedArrow()
         self.made_combo.addItem("— не выбрано —")
         self.made_combo.setMaxVisibleItems(8)
+        self.made_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+        scroller = QScroller.scroller(self.made_combo.view().viewport())
+        if scroller:
+            props = scroller.scrollerProperties()
+            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+            scroller.setScrollerProperties(props)
+        QScroller.grabGesture(self.made_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
         left_layout.addWidget(self.made_combo)
 
         self.made_manual = QCheckBox("Ручной ввод")
@@ -1921,6 +2038,14 @@ class MirlisMarkApp(QWidget):
         self.checked_combo = ComboBoxPopupDown()
         self.checked_combo.addItem("— не выбрано —")
         self.checked_combo.setMaxVisibleItems(8)
+        self.checked_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+        scroller = QScroller.scroller(self.checked_combo.view().viewport())
+        if scroller:
+            props = scroller.scrollerProperties()
+            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+            scroller.setScrollerProperties(props)
+        QScroller.grabGesture(self.checked_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
         left_layout.addWidget(self.checked_combo)
 
         self.checked_manual = QCheckBox("Ручной ввод")
@@ -1983,6 +2108,14 @@ class MirlisMarkApp(QWidget):
         self.font_size_combo.setFixedWidth(90)
         self.font_size_combo.addItems([str(s) for s in [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]])
         self.font_size_combo.setCurrentText(str(self._base_font_size))
+        self.font_size_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+        scroller = QScroller.scroller(self.font_size_combo.view().viewport())
+        if scroller:
+            props = scroller.scrollerProperties()
+            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+            scroller.setScrollerProperties(props)
+        QScroller.grabGesture(self.font_size_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
 
         self.btn_bold = ToolBtn("Ж")
         self.btn_bold.setFont(QFont("Segoe UI", 11, QFont.Black))
@@ -2019,6 +2152,14 @@ class MirlisMarkApp(QWidget):
             )
         except Exception:
             pass
+        self.font_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+        scroller = QScroller.scroller(self.font_combo.view().viewport())
+        if scroller:
+            props = scroller.scrollerProperties()
+            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+            scroller.setScrollerProperties(props)
+        QScroller.grabGesture(self.font_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
 
         tb.addWidget(self.btn_font_minus)
         tb.addWidget(self.btn_font_plus)
@@ -2128,48 +2269,55 @@ class MirlisMarkApp(QWidget):
 
         # print row
         pr = QHBoxLayout()
-        pr.setSpacing(12)
+        pr.setSpacing(8)
 
         self.print_btn = ActionBtn("ПЕЧАТЬ", kind="primary")
-        self.repeat_btn = ActionBtn("Повторить", kind="secondary")
-        self.repeat_btn.setStyleSheet('font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif;')
-        self.repeat_btn.setEnabled(False)
 
         self.copies_caption = QLabel("Количество")
         self.copies_caption.setObjectName("CopiesCaption")
         self.copies_caption.setAlignment(Qt.AlignCenter)
         self.copies_caption.setFocusPolicy(Qt.NoFocus)
+        self.copies_caption.setFixedWidth(
+            int(round(self.copies_caption.sizeHint().width() * 2.8))
+        )
         self.copies_minus = ActionBtn("−", kind="default")
-        self.copies_minus.setFixedWidth(44)
-        self.copies_minus.setAutoRepeat(True)
-        self.copies_minus.setAutoRepeatDelay(400)
-        self.copies_minus.setAutoRepeatInterval(80)
+        self.copies_minus.setFixedWidth(106)
         self.copies_input = QLineEdit("1")
-        self.copies_input.setFixedWidth(60)
+        self.copies_input.setFixedWidth(94)
         self.copies_input.setAlignment(Qt.AlignCenter)
         self.copies_plus = ActionBtn("+", kind="default")
-        self.copies_plus.setFixedWidth(44)
-        self.copies_plus.setAutoRepeat(True)
-        self.copies_plus.setAutoRepeatDelay(400)
-        self.copies_plus.setAutoRepeatInterval(80)
+        self.copies_plus.setFixedWidth(106)
+        for w in (self.minus_btn, self.plus_btn, self.copies_minus, self.copies_plus):
+            w.setObjectName("StepperBtn")
+        # Inline-стили на виджете; для кнопок — #StepperBtn (имя задаётся строкой выше)
+        self.copies_minus.setStyleSheet(
+            "#StepperBtn { font-size: 29px; font-weight: 900; padding: 0px; }"
+        )
+        self.copies_plus.setStyleSheet(
+            "#StepperBtn { font-size: 29px; font-weight: 900; padding: 0px; }"
+        )
+        self.copies_input.setStyleSheet(
+            "QLineEdit { font-size: 20px; font-weight: 700; padding: 4px 6px; }"
+            "QLineEdit:focus { border: 1px solid #6ea8fe; }"
+        )
+        _setup_auto_repeat(self.copies_minus, self.decrease_copies)
+        _setup_auto_repeat(self.copies_plus, self.increase_copies)
+        self.copies_minus.setFocusPolicy(Qt.NoFocus)
+        self.copies_plus.setFocusPolicy(Qt.NoFocus)
 
         copies_wrap = QWidget()
         cw = QHBoxLayout(copies_wrap)
         cw.setContentsMargins(0, 0, 0, 0)
-        cw.setSpacing(8)
+        cw.setSpacing(6)
         cw.addWidget(self.copies_caption, 1)
         cw.addWidget(self.copies_minus, 0)
         cw.addWidget(self.copies_input, 0)
         cw.addWidget(self.copies_plus, 0)
 
-        for w in (self.print_btn, self.repeat_btn, self.copies_caption, self.copies_minus, self.copies_plus, self.copies_input):
+        for w in (self.print_btn, self.copies_caption, self.copies_minus, self.copies_plus, self.copies_input):
             w.setMinimumHeight(68)
 
-        for w in (self.minus_btn, self.plus_btn, self.copies_minus, self.copies_plus):
-            w.setObjectName("StepperBtn")
-
         pr.addWidget(self.print_btn, 1)
-        pr.addWidget(self.repeat_btn, 1)
         pr.addWidget(copies_wrap, 1)
 
         center_panel_layout.addLayout(pr)
@@ -2189,6 +2337,7 @@ class MirlisMarkApp(QWidget):
         history_layout.addWidget(self.history_search)
 
         self.history_scroll = QScrollArea()
+        QScroller.grabGesture(self.history_scroll.viewport(), QScroller.TouchGesture)
         self.history_scroll.setObjectName("HistoryScroll")
         self.history_scroll.setWidgetResizable(True)
         history_layout.addWidget(self.history_scroll, 1)
@@ -2225,9 +2374,6 @@ class MirlisMarkApp(QWidget):
         self.unit_combo.currentTextChanged.connect(self.refresh_preview)
         self.qty_input.textChanged.connect(self.refresh_preview)
 
-        self.plus_btn.clicked.connect(self.increase_qty)
-        self.minus_btn.clicked.connect(self.decrease_qty)
-
         self.made_manual.stateChanged.connect(self.toggle_made_mode)
         self.checked_manual.stateChanged.connect(self.toggle_checked_mode)
 
@@ -2237,9 +2383,6 @@ class MirlisMarkApp(QWidget):
         self.checked_input.textChanged.connect(self.refresh_preview)
 
         self.print_btn.clicked.connect(self.print_label)
-        self.repeat_btn.clicked.connect(self.repeat_last_print)
-        self.copies_plus.clicked.connect(self.increase_copies)
-        self.copies_minus.clicked.connect(self.decrease_copies)
         self.copies_input.textChanged.connect(self._sanitize_copies)
         self.label_size_combo.currentIndexChanged.connect(self._on_label_size_changed)
 
@@ -2672,10 +2815,10 @@ class MirlisMarkApp(QWidget):
                     pass
 
         # Нижний блок: сделать "-" и "+" для количества ближе к квадратным,
-        # за счёт ограничения ширины "Печать" / "Повторить"
+        # за счёт ограничения ширины «Печать»
         try:
             if hasattr(self, "copies_minus") and hasattr(self, "copies_plus"):
-                sq = 68  # высота уже 68, делаем ширину такой же
+                sq = 163  # удвоенная ширина относительно квадрата 68×68
                 self.copies_minus.setFixedWidth(sq)
                 self.copies_plus.setFixedWidth(sq)
         except Exception:
@@ -2683,9 +2826,7 @@ class MirlisMarkApp(QWidget):
 
         try:
             if hasattr(self, "print_btn"):
-                self.print_btn.setMaximumWidth(260)
-            if hasattr(self, "repeat_btn"):
-                self.repeat_btn.setMaximumWidth(220)
+                self.print_btn.setMaximumWidth(208)
         except Exception:
             pass
 
@@ -3257,6 +3398,7 @@ class MirlisMarkApp(QWidget):
 
         # скролл-область
         scroll = QScrollArea()
+        QScroller.grabGesture(scroll.viewport(), QScroller.TouchGesture)
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background: #ffffff; }")
 
@@ -4366,7 +4508,6 @@ class MirlisMarkApp(QWidget):
             QMessageBox.warning(self, "Печать", f"Не удалось отправить на печать:\n{e}")
             return
 
-        self.repeat_btn.setEnabled(True)
         self.last_printed_preview_text = preview_text
         self._last_printed_tspl_bytes = tspl_bytes
 
@@ -4586,6 +4727,23 @@ def main():
     def on_splash_finished():
         nonlocal main_window
         main_window = MirlisMarkApp(app_mode=selected_mode)
+        # Отключаем системный квадрат Windows при долгом касании (press-and-hold)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(main_window.winId())
+                ATOM_NAME = "MicrosoftTabletPenServiceProperty"
+                ctypes.windll.kernel32.GlobalAddAtomW(ATOM_NAME)
+                DISABLE_FLAGS = (
+                    0x00000001 |  # PRESSANDHOLD
+                    0x00000008 |  # PENTAPFEEDBACK
+                    0x00000010 |  # PENBARRELFEEDBACK
+                    0x00010000 |  # FLICKS
+                    0x00100000    # FLICKFALLBACKKEYS
+                )
+                ctypes.windll.user32.SetPropW(hwnd, ATOM_NAME, DISABLE_FLAGS)
+            except Exception as e:
+                sys.stderr.write(f"[MirlisMark] disable touch feedback: {e}\n")
         main_window.showMaximized()
 
     video_path = SPLASH_VIDEO_PATH
