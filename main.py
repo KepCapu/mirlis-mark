@@ -1273,7 +1273,7 @@ class MirlisMarkApp(QWidget):
         self.history_entries = []
         self._history_filter_text = ""
         self.history_page = 0
-        self.history_page_size = 6
+        self.history_page_size = 5
         self._loading_from_history = False
         self._selected_history_id = None
 
@@ -1335,7 +1335,7 @@ class MirlisMarkApp(QWidget):
             }
 
             #HistoryCard:hover {
-                background: #f9fafb;
+                background: #ffffff;
             }
 
             #HistoryCard[selected="true"] {
@@ -1962,20 +1962,20 @@ class MirlisMarkApp(QWidget):
         # Высота кнопок −/+ должна совпадать с высотой unit_combo
 
         self.minus_btn = ActionBtn("−", kind="default")
-        self.minus_btn.setStyleSheet(
-            "#Btn_default { font-size: 26px; font-weight: 900; padding: 0px; }"
-        )
         self.minus_btn.setAutoRepeat(True)
         self.minus_btn.setAutoRepeatDelay(400)
         self.minus_btn.setAutoRepeatInterval(80)
+        self.minus_btn.setStyleSheet(
+            "#Btn_default { font-size: 29px; font-weight: 900; padding: 0px; }"
+        )
 
         self.plus_btn = ActionBtn("+", kind="default")
-        self.plus_btn.setStyleSheet(
-            "#Btn_default { font-size: 28px; font-weight: 900; padding: 0px; }"
-        )
         self.plus_btn.setAutoRepeat(True)
         self.plus_btn.setAutoRepeatDelay(400)
         self.plus_btn.setAutoRepeatInterval(80)
+        self.plus_btn.setStyleSheet(
+            "#Btn_default { font-size: 29px; font-weight: 900; padding: 0px; }"
+        )
 
         self.minus_btn.clicked.connect(self.decrease_qty)
         self.plus_btn.clicked.connect(self.increase_qty)
@@ -2289,6 +2289,12 @@ class MirlisMarkApp(QWidget):
         self.copies_plus.setFixedWidth(106)
         for w in (self.minus_btn, self.plus_btn, self.copies_minus, self.copies_plus):
             w.setObjectName("StepperBtn")
+        self.minus_btn.setStyleSheet(
+            "#StepperBtn { font-size: 29px; font-weight: 900; padding: 0px; }"
+        )
+        self.plus_btn.setStyleSheet(
+            "#StepperBtn { font-size: 29px; font-weight: 900; padding: 0px; }"
+        )
         # Inline-стили на виджете; для кнопок — #StepperBtn (имя задаётся строкой выше)
         self.copies_minus.setStyleSheet(
             "#StepperBtn { font-size: 29px; font-weight: 900; padding: 0px; }"
@@ -2340,6 +2346,8 @@ class MirlisMarkApp(QWidget):
         QScroller.grabGesture(self.history_scroll.viewport(), QScroller.TouchGesture)
         self.history_scroll.setObjectName("HistoryScroll")
         self.history_scroll.setWidgetResizable(True)
+        self.history_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         history_layout.addWidget(self.history_scroll, 1)
 
         history_scroll_content = QWidget()
@@ -2349,20 +2357,39 @@ class MirlisMarkApp(QWidget):
 
         self.history_scroll.setWidget(history_scroll_content)
 
-        pager_row = QHBoxLayout()
-        pager_row.setSpacing(8)
-
         self.history_prev_btn = ActionBtn("←", kind="default")
+        self.history_prev_btn.setFixedSize(72, 56)
+        self.history_prev_btn.setStyleSheet(
+            "#Btn_default { font-size: 22px; font-weight: 900; padding: 0px; }"
+        )
         self.history_next_btn = ActionBtn("→", kind="default")
+        self.history_next_btn.setFixedSize(72, 56)
+        self.history_next_btn.setStyleSheet(
+            "#Btn_default { font-size: 22px; font-weight: 900; padding: 0px; }"
+        )
         self.history_page_label = QLabel("Страница 1 из 1")
         self.history_page_label.setAlignment(Qt.AlignCenter)
-        self.history_page_label.setStyleSheet("color: #6b7280; font-size: 12px;")
+        self.history_page_label.setStyleSheet(
+            "color: #4b5563; font-size: 15px; font-weight: 700; background: transparent;"
+        )
+
+        # Контейнер-фрейм для всей панели пагинации
+        pager_frame = QFrame()
+        pager_frame.setObjectName("PagerFrame")
+        pager_frame.setStyleSheet(
+            "#PagerFrame { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; }"
+        )
+        pager_row = QHBoxLayout(pager_frame)
+        pager_row.setContentsMargins(12, 10, 12, 10)
+        pager_row.setSpacing(8)
 
         pager_row.addWidget(self.history_prev_btn, 0)
         pager_row.addWidget(self.history_page_label, 1)
         pager_row.addWidget(self.history_next_btn, 0)
 
-        history_layout.addLayout(pager_row)
+        # pager_frame: единственное место добавления в history_layout
+        pager_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        history_layout.addWidget(pager_frame, 0)
 
         row.addWidget(left_panel, 3)
         row.addWidget(center_panel, 4)
@@ -3603,11 +3630,11 @@ class MirlisMarkApp(QWidget):
             top_row.setSpacing(6)
 
             prod_label = QLabel(str(e.get("product", "")))
-            prod_label.setStyleSheet("font-weight: 600;")
+            prod_label.setStyleSheet("font-weight: 600; font-size: 15px; background: transparent; color: #0f172a;")
             prod_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             qty_label = QLabel(str(e.get("qty", "")))
             qty_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            qty_label.setStyleSheet("font-weight: 600; color: #111827;")
+            qty_label.setStyleSheet("font-weight: 600; color: #0f172a; font-size: 15px; background: transparent;")
             qty_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             top_row.addWidget(prod_label, 1)
@@ -3618,20 +3645,20 @@ class MirlisMarkApp(QWidget):
             mid_parts = [p for p in [made, checked] if p]
             mid_text = " · ".join(mid_parts) if mid_parts else ""
             mid_row = QLabel(mid_text)
-            mid_row.setStyleSheet("color: #6b7280; font-size: 12px;")
+            mid_row.setStyleSheet("color: #374151; font-size: 14px; background: transparent;")
             mid_row.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             bottom_row = QHBoxLayout()
             bottom_row.setSpacing(6)
 
             time_label = QLabel(str(e.get("time", "")))
-            time_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
+            time_label.setStyleSheet("color: #4b5563; font-size: 13px; background: transparent;")
             time_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             batch = str(e.get("batch", ""))
             batch_label = QLabel(f"№ {batch}" if batch else "")
             batch_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            batch_label.setStyleSheet("color: #6b7280; font-size: 12px;")
+            batch_label.setStyleSheet("color: #4b5563; font-size: 13px; background: transparent;")
             batch_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
             bottom_row.addWidget(time_label, 1)
