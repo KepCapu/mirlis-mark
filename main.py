@@ -1290,7 +1290,8 @@ class MirlisMarkApp(QWidget):
         self._excel_autorefresh_timer.timeout.connect(self._on_excel_autorefresh_tick)
         self._excel_autorefresh_timer.start(60_000)
 
-        # архив напечатанных этикеток: очистка старше 31 дня при старте
+        # архив напечатанных этикеток: миграция в новую структуру + очистка старше 365 дней при старте
+        self._migrate_labels_archive_layout()
         self._cleanup_old_label_archives(days=365)
 
         self.refresh_preview()
@@ -2336,7 +2337,39 @@ class MirlisMarkApp(QWidget):
         history_layout.setSpacing(12)
 
         history_title = HeaderLabel("История")
-        history_layout.addWidget(history_title, 0, Qt.AlignHCenter)
+
+        self.open_labels_folder_btn = QPushButton()
+        self.open_labels_folder_btn.setObjectName("OpenLabelsFolderBtn")
+        self.open_labels_folder_btn.setIcon(QIcon(resource_path("assets/folder.png")))
+        self.open_labels_folder_btn.setIconSize(QSize(32, 32))
+        self.open_labels_folder_btn.setFixedSize(66, 44)
+        self.open_labels_folder_btn.setCursor(Qt.PointingHandCursor)
+        self.open_labels_folder_btn.setToolTip("Открыть папку с напечатанными этикетками")
+        self.open_labels_folder_btn.setStyleSheet(
+            "#OpenLabelsFolderBtn { background: #ffffff; border: 1px solid #d0d7e2; "
+            "border-radius: 12px; padding: 0px; }"
+            "#OpenLabelsFolderBtn:hover { background: #eef2ff; border-color: #d0d7e2; }"
+            "#OpenLabelsFolderBtn:pressed { background: #e5e7ff; border-color: #4f46e5; }"
+        )
+        self.open_labels_folder_btn.clicked.connect(self.open_labels_folder)
+
+        history_title_row = QHBoxLayout()
+        history_title_row.setContentsMargins(0, 0, 0, 0)
+        history_title_row.setSpacing(0)
+
+        # Невидимый спейсер слева такой же ширины как кнопка справа,
+        # чтобы заголовок остался строго по центру панели
+        _title_left_spacer = QWidget()
+        _title_left_spacer.setFixedWidth(66)
+        _title_left_spacer.setFixedHeight(1)
+        _title_left_spacer.setStyleSheet("background: transparent;")
+        history_title_row.addWidget(_title_left_spacer, 0)
+
+        history_title_row.addStretch(1)
+        history_title_row.addWidget(history_title, 0, Qt.AlignVCenter)
+        history_title_row.addStretch(1)
+        history_title_row.addWidget(self.open_labels_folder_btn, 0, Qt.AlignVCenter)
+        history_layout.addLayout(history_title_row)
 
         self.history_search = QLineEdit()
         self.history_search.setPlaceholderText("Поиск по истории")
@@ -3344,6 +3377,12 @@ class MirlisMarkApp(QWidget):
 
     def open_excel_folder(self):
         folder = os.path.dirname(self.excel_path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def open_labels_folder(self):
+        """Открыть папку с архивом напечатанных этикеток (%LOCALAPPDATA%\\MirlisMark\\Готовые этикетки\\)."""
+        folder = self._labels_archive_root()
+        os.makedirs(folder, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _open_statistics(self):
@@ -4654,9 +4693,17 @@ class MirlisMarkApp(QWidget):
     def _labels_archive_root(self) -> str:
         return os.path.join(app_data_dir(), "Готовые этикетки")
 
+    _MONTH_NAMES_RU_NOM = [
+        "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+    ]
+
     def _labels_archive_day_dir(self) -> str:
-        day = datetime.now().strftime("%d.%m.%Y")
-        return os.path.join(self._labels_archive_root(), day)
+        now = datetime.now()
+        year = f"{now.year:04d}"
+        month = f"{now.month:02d} — {self._MONTH_NAMES_RU_NOM[now.month - 1]}"
+        day = now.strftime("%d.%m.%Y")
+        return os.path.join(self._labels_archive_root(), year, month, day)
 
     def _sanitize_filename_part(self, s: str) -> str:
         s = (s or "").strip()
@@ -4670,24 +4717,90 @@ class MirlisMarkApp(QWidget):
         return s[:120].strip() or "—"
 
     def _cleanup_old_label_archives(self, days: int = 365):
+        """Удаляет папки дней старше N дней. Структура: YYYY/MM — Месяц/DD.MM.YYYY/."""
         root = self._labels_archive_root()
         try:
             if not os.path.isdir(root):
                 return
             today = datetime.now().date()
-            for name in os.listdir(root):
-                p = os.path.join(root, name)
-                if not os.path.isdir(p):
+            for year_name in list(os.listdir(root)):
+                year_path = os.path.join(root, year_name)
+                if not os.path.isdir(year_path):
+                    continue
+                for month_name in list(os.listdir(year_path)):
+                    month_path = os.path.join(year_path, month_name)
+                    if not os.path.isdir(month_path):
+                        continue
+                    for day_name in list(os.listdir(month_path)):
+                        day_path = os.path.join(month_path, day_name)
+                        if not os.path.isdir(day_path):
+                            continue
+                        try:
+                            d = datetime.strptime(day_name.strip(), "%d.%m.%Y").date()
+                        except Exception:
+                            continue
+                        age_days = (today - d).days
+                        if age_days >= days:
+                            shutil.rmtree(day_path, ignore_errors=True)
+                    # Удаляем пустую папку месяца
+                    try:
+                        if os.path.isdir(month_path) and not os.listdir(month_path):
+                            os.rmdir(month_path)
+                    except Exception:
+                        pass
+                # Удаляем пустую папку года
+                try:
+                    if os.path.isdir(year_path) and not os.listdir(year_path):
+                        os.rmdir(year_path)
+                except Exception:
+                    pass
+        except Exception as e:
+            sys.stderr.write(f"[MirlisMark] Archive cleanup error: {e}\n")
+
+    def _migrate_labels_archive_layout(self):
+        """Однократная миграция: переносит папки DD.MM.YYYY из корня архива
+        в новую структуру YYYY/MM — Месяц/DD.MM.YYYY/. Безопасно при повторных запусках."""
+        root = self._labels_archive_root()
+        try:
+            if not os.path.isdir(root):
+                return
+            for name in list(os.listdir(root)):
+                src = os.path.join(root, name)
+                if not os.path.isdir(src):
                     continue
                 try:
                     d = datetime.strptime(name.strip(), "%d.%m.%Y").date()
                 except Exception:
+                    continue  # это не папка дня — пропускаем (вероятно YYYY)
+                year_dir = os.path.join(root, f"{d.year:04d}")
+                month_dir = os.path.join(
+                    year_dir,
+                    f"{d.month:02d} — {self._MONTH_NAMES_RU_NOM[d.month - 1]}",
+                )
+                target = os.path.join(month_dir, name)
+                try:
+                    os.makedirs(month_dir, exist_ok=True)
+                except Exception:
                     continue
-                age_days = (today - d).days
-                if age_days >= days:
-                    shutil.rmtree(p, ignore_errors=True)
+                if os.path.exists(target):
+                    # Целевая папка уже есть — переносим только файлы
+                    try:
+                        for f in list(os.listdir(src)):
+                            src_f = os.path.join(src, f)
+                            dst_f = os.path.join(target, f)
+                            if not os.path.exists(dst_f):
+                                shutil.move(src_f, dst_f)
+                        if not os.listdir(src):
+                            os.rmdir(src)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        shutil.move(src, target)
+                    except Exception:
+                        pass
         except Exception as e:
-            sys.stderr.write(f"[MirlisMark] Archive cleanup error: {e}\n")
+            sys.stderr.write(f"[MirlisMark] Archive migration error: {e}\n")
 
     def _archive_printed_label(self, preview_text: str, entry: dict | None, copies: int):
         # очистка старых папок — при каждом сохранении
