@@ -2001,34 +2001,8 @@ class MirlisMarkApp(QWidget):
 
         left_layout.addLayout(grid)
 
-        # Опустить блоки "Изготовил" / "Цех" / "Дата и время" ниже — добавим вертикальный отступ
+        # Опустить блоки "Цех" / "Изготовил" / "Дата и время" ниже — добавим вертикальный отступ
         left_layout.addSpacing(12)
-
-        lab_made = QLabel("Изготовил")
-        lab_made.setObjectName("FieldLabel")
-        lab_made.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        left_layout.addWidget(lab_made)
-
-        self.made_combo = ComboBoxFixedArrow()
-        self.made_combo.addItem("— не выбрано —")
-        self.made_combo.setMaxVisibleItems(8)
-        self.made_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
-        scroller = QScroller.scroller(self.made_combo.view().viewport())
-        if scroller:
-            props = scroller.scrollerProperties()
-            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
-            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
-            scroller.setScrollerProperties(props)
-        QScroller.grabGesture(self.made_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
-        left_layout.addWidget(self.made_combo)
-
-        self.made_manual = QCheckBox("Ручной ввод")
-        left_layout.addWidget(self.made_manual)
-
-        self.made_input = QLineEdit()
-        self.made_input.setPlaceholderText("ФИО (можно оставить пустым)")
-        self.made_input.setVisible(False)
-        left_layout.addWidget(self.made_input)
 
         lab_chk = QLabel("Цех")
         lab_chk.setObjectName("FieldLabel")
@@ -2055,6 +2029,32 @@ class MirlisMarkApp(QWidget):
         self.checked_input.setPlaceholderText("Цех (можно оставить пустым)")
         self.checked_input.setVisible(False)
         left_layout.addWidget(self.checked_input)
+
+        lab_made = QLabel("Изготовил")
+        lab_made.setObjectName("FieldLabel")
+        lab_made.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        left_layout.addWidget(lab_made)
+
+        self.made_combo = ComboBoxFixedArrow()
+        self.made_combo.addItem("— не выбрано —")
+        self.made_combo.setMaxVisibleItems(8)
+        self.made_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+        scroller = QScroller.scroller(self.made_combo.view().viewport())
+        if scroller:
+            props = scroller.scrollerProperties()
+            props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+            props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+            scroller.setScrollerProperties(props)
+        QScroller.grabGesture(self.made_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
+        left_layout.addWidget(self.made_combo)
+
+        self.made_manual = QCheckBox("Ручной ввод")
+        left_layout.addWidget(self.made_manual)
+
+        self.made_input = QLineEdit()
+        self.made_input.setPlaceholderText("ФИО (можно оставить пустым)")
+        self.made_input.setVisible(False)
+        left_layout.addWidget(self.made_input)
 
         lab_dt = QLabel("Дата и время")
         lab_dt.setObjectName("FieldLabel")
@@ -4182,8 +4182,8 @@ class MirlisMarkApp(QWidget):
         text_parts.append(f"Дата/время: {format_dt(label.produced_at)}")
         text_parts.append(f"№ партии: {label.batch}")
         text_parts.append(f"Годен до: {format_dt(label.expires_at)}")
-        text_parts.append(f"Изготовил: {label.made_by}")
         text_parts.append(f"Цех: {label.checked_by}")
+        text_parts.append(f"Изготовил: {label.made_by}")
 
         text = "\n".join(text_parts) + "\n"
         return (text, True)
