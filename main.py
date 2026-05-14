@@ -2105,7 +2105,7 @@ class MirlisMarkApp(QWidget):
 
         self.font_size_combo = ComboBoxFixedArrow()
         self.font_size_combo.setEditable(True)
-        self.font_size_combo.setFixedWidth(90)
+        self.font_size_combo.setFixedWidth(130)
         self.font_size_combo.addItems([str(s) for s in [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]])
         self.font_size_combo.setCurrentText(str(self._base_font_size))
         self.font_size_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
@@ -2143,7 +2143,7 @@ class MirlisMarkApp(QWidget):
 
         self.font_combo = QFontComboBox()
         self.font_combo.setObjectName("ComboWithArrow")
-        self.font_combo.setFixedWidth(220)
+        self.font_combo.setFixedWidth(180)
         # делаем список шрифтов чище (без агрессивного предпросмотра системным рендером)
         try:
             self.font_combo.setView(QListView())
