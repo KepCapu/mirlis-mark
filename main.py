@@ -63,6 +63,7 @@ from PyQt5.QtWidgets import (
     QGraphicsView,
     QGraphicsScene,
     QGraphicsProxyWidget,
+    QGraphicsDropShadowEffect,
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRectF, QEasingCurve
 from PyQt5.QtCore import QObject
@@ -82,6 +83,7 @@ from PyQt5.QtGui import (
     QPainter,
     QColor,
     QBrush,
+    QPen,
     QRegion,
 )
 
@@ -324,37 +326,49 @@ class _StyledScrollBar(QScrollBar):
     Устанавливается на verticalScrollBar() popup QComboBox.
     """
 
-    TRACK = QColor("#e5e7eb")
-    HANDLE = QColor("#f9b233")
+    TRACK        = QColor("#cbd5e1")
+    HANDLE       = QColor("#f9b233")
     HANDLE_HOVER = QColor("#e6a020")
-    R = 10  # радиус скругления
+
+    WIDGET_W = 52
+    TRACK_W  = 42
+    HANDLE_W = 32
+    HANDLE_H = 68
+    R        = 12
 
     def __init__(self, parent=None):
         super().__init__(Qt.Vertical, parent)
-        self.setFixedWidth(20)
-        self.R = 10
+        self.setFixedWidth(self.WIDGET_W)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setPen(Qt.NoPen)
 
-        # трек
-        painter.setBrush(self.TRACK)
-        painter.drawRoundedRect(self.rect(), self.R, self.R)
+        w = self.width()
+        h = self.height()
 
-        # ползунок
+        # Сначала заливаем весь виджет белым, чтобы перекрыть дефолтный серый фон Qt по бокам трека
+        painter.fillRect(self.rect(), QColor("#ffffff"))
+
+        # трек — тонкий контур, без заливки
+        tx = (w - self.TRACK_W) // 2
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(self.TRACK, 1))
+        painter.drawRoundedRect(tx, 0, self.TRACK_W, h, self.R, self.R)
+        painter.setPen(Qt.NoPen)     # возвращаем NoPen, чтобы ползунок ниже рисовался без обводки
+
+        # ползунок — фиксированная высота, скользит по треку
         total = self.maximum() - self.minimum()
         if total <= 0:
             return
-        ratio_start = (self.value() - self.minimum()) / (total + self.pageStep())
-        ratio_size = self.pageStep() / (total + self.pageStep())
-        h = self.height()
-        y0 = int(ratio_start * h)
-        hh = max(int(ratio_size * h), 28)
+        travel = max(1, h - self.HANDLE_H)
+        y0 = int((self.value() - self.minimum()) / total * travel)
+        y0 = max(0, min(y0, travel))
+        hx = tx + (self.TRACK_W - self.HANDLE_W) // 2
         hovered = self.underMouse()
         painter.setBrush(self.HANDLE_HOVER if hovered else self.HANDLE)
-        painter.drawRoundedRect(2, y0 + 2, self.width() - 4, hh - 4, self.R, self.R)
+        painter.drawRoundedRect(hx, y0, self.HANDLE_W, self.HANDLE_H, self.R, self.R)
 
 
 class ComboBoxFixedArrow(QComboBox):
@@ -1781,10 +1795,27 @@ class MirlisMarkApp(QWidget):
         self.excel_pill.setMaximumWidth(520)
         self.excel_pill.setMinimumHeight(48)
 
-        top_layout.addSpacing(40)
-        top_layout.addStretch(1)
+        top_layout.addStretch(3)
 
-        # ===== Группа "Файлы данных" (управление Excel-файлами) =====
+        # ===== Группа "Файлы данных" — обособленный фрейм с рамкой и тенью =====
+        self.tools_frame = QFrame()
+        self.tools_frame.setObjectName("ExcelToolsFrame")
+        self.tools_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.tools_frame.setMinimumWidth(900)
+        self.tools_frame.setStyleSheet(
+            "#ExcelToolsFrame { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 18px; }"
+        )
+        _tools_shadow = QGraphicsDropShadowEffect(self.tools_frame)
+        _tools_shadow.setBlurRadius(18)
+        _tools_shadow.setOffset(0, 4)
+        _tools_shadow.setColor(QColor(0, 0, 0, 35))
+        self.tools_frame.setGraphicsEffect(_tools_shadow)
+
+        tools_layout = QHBoxLayout(self.tools_frame)
+        tools_layout.setContentsMargins(14, 8, 14, 8)
+        tools_layout.setSpacing(10)
+        tools_layout.addStretch(1)
+
         self.add_excel_btn = ActionBtn("Добавить", kind="default")
         self.add_excel_btn.setIcon(QIcon(resource_path("assets/addition.png")))
         self.add_excel_btn.setIconSize(QSize(28, 28))
@@ -1793,7 +1824,7 @@ class MirlisMarkApp(QWidget):
         )
         self.add_excel_btn.setToolTip("Добавить новый Excel-файл с продуктами / цехами / сотрудниками")
         self.add_excel_btn.clicked.connect(self._on_add_excel)
-        top_layout.addWidget(self.add_excel_btn, 0, Qt.AlignVCenter)
+        tools_layout.addWidget(self.add_excel_btn, 0, Qt.AlignVCenter)
 
         self.active_excel_btn = ActionBtn("Активные", kind="default")
         self.active_excel_btn.setIcon(QIcon(resource_path("assets/active.png")))
@@ -1803,7 +1834,7 @@ class MirlisMarkApp(QWidget):
         )
         self.active_excel_btn.setToolTip("Выбрать, какие из добавленных Excel-файлов используются в работе")
         self.active_excel_btn.clicked.connect(self._on_active_excel)
-        top_layout.addWidget(self.active_excel_btn, 0, Qt.AlignVCenter)
+        tools_layout.addWidget(self.active_excel_btn, 0, Qt.AlignVCenter)
 
         # Двухстрочная подпись по центру группы
         self.files_caption = QWidget()
@@ -1827,7 +1858,7 @@ class MirlisMarkApp(QWidget):
         _files_sub.setAlignment(Qt.AlignCenter)
         _files_caption_lay.addWidget(_files_title)
         _files_caption_lay.addWidget(_files_sub)
-        top_layout.addWidget(self.files_caption, 0, Qt.AlignVCenter)
+        tools_layout.addWidget(self.files_caption, 0, Qt.AlignVCenter)
 
         self.delete_excel_btn = ActionBtn("Удалить", kind="default")
         self.delete_excel_btn.setIcon(QIcon(resource_path("assets/trash.png")))
@@ -1837,7 +1868,7 @@ class MirlisMarkApp(QWidget):
         )
         self.delete_excel_btn.setToolTip("Убрать Excel-файл из списка приложения (с диска НЕ удаляется)")
         self.delete_excel_btn.clicked.connect(self._on_delete_excel)
-        top_layout.addWidget(self.delete_excel_btn, 0, Qt.AlignVCenter)
+        tools_layout.addWidget(self.delete_excel_btn, 0, Qt.AlignVCenter)
 
         self.reload_btn = ActionBtn("Обновить", kind="default")
         self.reload_btn.setIcon(QIcon(resource_path("assets/update.png")))
@@ -1847,15 +1878,23 @@ class MirlisMarkApp(QWidget):
         )
         self.reload_btn.setToolTip("Перечитать активные Excel-файлы")
         self.reload_btn.clicked.connect(self.reload_excel)
-        top_layout.addWidget(self.reload_btn, 0, Qt.AlignVCenter)
+        tools_layout.addWidget(self.reload_btn, 0, Qt.AlignVCenter)
+        tools_layout.addStretch(1)
 
-        top_layout.addStretch(4)
+        top_layout.addWidget(self.tools_frame, 10)
+
+        top_layout.addStretch(5)
 
         # ===== Кнопка статистики (справа) =====
         self.stats_btn = ActionBtn("Статистика", kind="default")
         self.stats_btn.setObjectName("StatsBtn")
         self.stats_btn.setIcon(self._make_stats_icon())
-        self.stats_btn.setIconSize(QSize(18, 18))
+        self.stats_btn.setIconSize(QSize(28, 28))
+        self.stats_btn.setStyleSheet(
+            "#StatsBtn { background: #fef3c7; border: 1px solid #f59e0b; "
+            "color: #92400e; font-weight: 700; font-size: 16px; padding: 14px 22px; }"
+            "#StatsBtn:hover { background: #fde68a; }"
+        )
         self.stats_btn.clicked.connect(self._open_statistics)
         top_layout.addWidget(self.stats_btn, 0, Qt.AlignVCenter)
 
@@ -1949,7 +1988,12 @@ class MirlisMarkApp(QWidget):
         self.product_combo.setEditable(True)
         self.product_combo.setInsertPolicy(QComboBox.NoInsert)
         self.product_combo.setPlaceholderText("Введите продукт или выберите из списка")
-        self.product_combo.setMaxVisibleItems(8)
+        self.product_combo.setMaxVisibleItems(16)
+        # Для editable QComboBox setMaxVisibleItems иногда игнорируется стилем —
+        # отключаем системный стиль popup, чтобы лимит работал на Windows.
+        self.product_combo.setStyleSheet(
+            self.product_combo.styleSheet() + " QComboBox { combobox-popup: 0; }"
+        )
         self.product_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
         scroller = QScroller.scroller(self.product_combo.view().viewport())
         if scroller:
@@ -2612,7 +2656,7 @@ class MirlisMarkApp(QWidget):
 
             total_height = visible_rows * row_h + max(0, visible_rows - 1) * spacing + frame + 12
             if combo is self.product_combo:
-                total_height = int(total_height * 0.5)
+                total_height = int(total_height * 0.75)
             if combo is self.made_combo:
                 total_height = max(1, int(total_height) - 12)
                 # tablet: "изготовил" — сделать popup заметно компактнее (~1.5×)
@@ -2715,7 +2759,7 @@ class MirlisMarkApp(QWidget):
                 border: none;
                 border-radius: 13px;
                 outline: none;
-                padding: 10px 40px 10px 6px;
+                padding: 10px 10px 10px 6px;
                 margin: 0px;
             }
 
@@ -2746,16 +2790,16 @@ class MirlisMarkApp(QWidget):
                 background: transparent;
             }
             QScrollBar:vertical {
-                background: #eff1f5;
+                background: transparent;
                 border: none;
                 border-radius: 6px;
-                width: 20px;
-                margin: 4px 6px 4px 3px;
+                width: 52px;
+                margin: 4px 10px 4px 0px;
             }
             QScrollBar::handle:vertical {
                 background: #f9b233;
-                border-radius: 5px;
-                min-height: 32px;
+                border-radius: 10px;
+                min-height: 60px;
                 margin: 0px;
             }
             QScrollBar::handle:vertical:hover {
@@ -2808,7 +2852,7 @@ class MirlisMarkApp(QWidget):
                 # за счёт меньшего правого padding у view (иначе короткие "КГ/ШТ" выглядят зажатыми).
                 if hasattr(self, "unit_combo") and combo is self.unit_combo:
                     _lv_qss = _lv_qss.replace(
-                        "padding: 10px 40px 10px 6px;", "padding: 10px 20px 10px 6px;"
+                        "padding: 10px 10px 10px 6px;", "padding: 10px 10px 10px 6px;"
                     )
                     _lv_qss = _lv_qss.replace(
                         "padding: 12px 18px;", "padding: 12px 14px;"
@@ -2827,12 +2871,11 @@ class MirlisMarkApp(QWidget):
                     lv.setItemDelegate(_TabletComboItemDelegate(lv, min_h=54))
                 combo.setView(lv)
 
-                # QFontComboBox (font_combo): подменяем скроллбар на кастомный, как у остальных tablet dropdown
+                # Единый кастомный скроллбар на ВСЕХ tablet popup'ах (а не только у font_combo)
                 try:
-                    if combo is self.font_combo:
-                        old_sb = lv.verticalScrollBar()
-                        if old_sb is not None and not isinstance(old_sb, _StyledScrollBar):
-                            lv.setVerticalScrollBar(_StyledScrollBar(lv))
+                    old_sb = lv.verticalScrollBar()
+                    if old_sb is None or not isinstance(old_sb, _StyledScrollBar):
+                        lv.setVerticalScrollBar(_StyledScrollBar(lv))
                 except Exception:
                     pass
 
@@ -3992,11 +4035,7 @@ class MirlisMarkApp(QWidget):
         self._statistics_mode = enabled
 
         for b in (
-            getattr(self, "add_excel_btn", None),
-            getattr(self, "active_excel_btn", None),
-            getattr(self, "files_caption", None),
-            getattr(self, "delete_excel_btn", None),
-            getattr(self, "reload_btn", None),
+            getattr(self, "tools_frame", None),
             getattr(self, "stats_btn", None),
         ):
             if b is not None:
