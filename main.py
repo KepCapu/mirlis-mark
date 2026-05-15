@@ -52,6 +52,8 @@ from PyQt5.QtWidgets import (
     QCalendarWidget,
     QGridLayout,
     QDialog,
+    QListWidget,
+    QListWidgetItem,
     QListView,
     QScrollBar,
     QScroller,
@@ -1779,29 +1781,91 @@ class MirlisMarkApp(QWidget):
         self.excel_pill.setMaximumWidth(520)
         self.excel_pill.setMinimumHeight(48)
 
-        top_layout.addStretch(1)
-        top_layout.addWidget(self.excel_pill, 0, Qt.AlignVCenter)
+        top_layout.addSpacing(40)
         top_layout.addStretch(1)
 
+        # ===== Группа "Файлы данных" (управление Excel-файлами) =====
+        self.add_excel_btn = ActionBtn("Добавить", kind="default")
+        self.add_excel_btn.setIcon(QIcon(resource_path("assets/addition.png")))
+        self.add_excel_btn.setIconSize(QSize(28, 28))
+        self.add_excel_btn.setStyleSheet(
+            "#Btn_default { font-size: 16px; font-weight: 600; padding: 14px 22px; }"
+        )
+        self.add_excel_btn.setToolTip("Добавить новый Excel-файл с продуктами / цехами / сотрудниками")
+        self.add_excel_btn.clicked.connect(self._on_add_excel)
+        top_layout.addWidget(self.add_excel_btn, 0, Qt.AlignVCenter)
+
+        self.active_excel_btn = ActionBtn("Активные", kind="default")
+        self.active_excel_btn.setIcon(QIcon(resource_path("assets/active.png")))
+        self.active_excel_btn.setIconSize(QSize(28, 28))
+        self.active_excel_btn.setStyleSheet(
+            "#Btn_default { font-size: 16px; font-weight: 600; padding: 14px 22px; }"
+        )
+        self.active_excel_btn.setToolTip("Выбрать, какие из добавленных Excel-файлов используются в работе")
+        self.active_excel_btn.clicked.connect(self._on_active_excel)
+        top_layout.addWidget(self.active_excel_btn, 0, Qt.AlignVCenter)
+
+        # Двухстрочная подпись по центру группы
+        self.files_caption = QWidget()
+        self.files_caption.setObjectName("FilesCaption")
+        self.files_caption.setStyleSheet(
+            "#FilesCaption { background: transparent; }"
+        )
+        self.files_caption.setAttribute(Qt.WA_TranslucentBackground, False)
+        _files_caption_lay = QVBoxLayout(self.files_caption)
+        _files_caption_lay.setContentsMargins(18, 0, 18, 0)
+        _files_caption_lay.setSpacing(2)
+        _files_title = QLabel("Файлы данных")
+        _files_title.setStyleSheet(
+            "font-weight: 700; font-size: 16px; color: #111827; background: transparent;"
+        )
+        _files_title.setAlignment(Qt.AlignCenter)
+        _files_sub = QLabel("Управление Excel-файлами приложения")
+        _files_sub.setStyleSheet(
+            "font-weight: 400; font-size: 12px; color: #6b7280; background: transparent;"
+        )
+        _files_sub.setAlignment(Qt.AlignCenter)
+        _files_caption_lay.addWidget(_files_title)
+        _files_caption_lay.addWidget(_files_sub)
+        top_layout.addWidget(self.files_caption, 0, Qt.AlignVCenter)
+
+        self.delete_excel_btn = ActionBtn("Удалить", kind="default")
+        self.delete_excel_btn.setIcon(QIcon(resource_path("assets/trash.png")))
+        self.delete_excel_btn.setIconSize(QSize(28, 28))
+        self.delete_excel_btn.setStyleSheet(
+            "#Btn_default { font-size: 16px; font-weight: 600; padding: 14px 22px; }"
+        )
+        self.delete_excel_btn.setToolTip("Убрать Excel-файл из списка приложения (с диска НЕ удаляется)")
+        self.delete_excel_btn.clicked.connect(self._on_delete_excel)
+        top_layout.addWidget(self.delete_excel_btn, 0, Qt.AlignVCenter)
+
         self.reload_btn = ActionBtn("Обновить", kind="default")
+        self.reload_btn.setIcon(QIcon(resource_path("assets/update.png")))
+        self.reload_btn.setIconSize(QSize(28, 28))
+        self.reload_btn.setStyleSheet(
+            "#Btn_default { font-size: 16px; font-weight: 600; padding: 14px 22px; }"
+        )
+        self.reload_btn.setToolTip("Перечитать активные Excel-файлы")
         self.reload_btn.clicked.connect(self.reload_excel)
         top_layout.addWidget(self.reload_btn, 0, Qt.AlignVCenter)
 
-        self.open_folder_btn = ActionBtn("Папка", kind="default")
-        self.open_folder_btn.clicked.connect(self.open_excel_folder)
-        top_layout.addWidget(self.open_folder_btn, 0, Qt.AlignVCenter)
+        top_layout.addStretch(4)
 
-        self.choose_path_btn = ActionBtn("Выбрать файл", kind="default")
-        self.choose_path_btn.clicked.connect(self.choose_excel_path)
-        top_layout.addWidget(self.choose_path_btn, 0, Qt.AlignVCenter)
-
+        # ===== Кнопка статистики (справа) =====
         self.stats_btn = ActionBtn("Статистика", kind="default")
         self.stats_btn.setObjectName("StatsBtn")
-        # иконка — встроенный chart-bars через QPainter (заглушка; можно заменить на assets/stats.svg)
         self.stats_btn.setIcon(self._make_stats_icon())
         self.stats_btn.setIconSize(QSize(18, 18))
         self.stats_btn.clicked.connect(self._open_statistics)
         top_layout.addWidget(self.stats_btn, 0, Qt.AlignVCenter)
+
+        # excel_pill больше не показывается в верхней панели, но виджет создан
+        # выше — оставляем его невидимым, чтобы существующие вызовы update_excel_status()
+        # не падали. На следующих этапах он будет окончательно удалён.
+        try:
+            self.excel_pill.hide()
+        except Exception:
+            pass
 
         # --- Statistics mode top-bar controls (hidden by default) ---
         self.day_btn = ActionBtn("День", kind="default")
@@ -3213,39 +3277,88 @@ class MirlisMarkApp(QWidget):
             made_combo = self.made_combo.currentText()
             checked_combo = self.checked_combo.currentText()
 
-            # определяем имена листов
-            resolved = self._resolve_sheet_names(self.excel_path, silent=silent_errors)
-            if resolved is None:
-                # пользователь отменил выбор листов
-                return
-            sheet_products, sheet_made, sheet_checked = resolved
+            # === Этап C: чтение данных из всех активных Excel-файлов ===
+            self._ensure_default_excel_source_present()
 
-            # загружаем продукты
-            if sheet_products:
-                products_all = load_products(self.excel_path, sheet_name=sheet_products)
-                self.products = [p for p in products_all if int(p.get("active", 0)) == 1]
-                # Repair typical mojibake (if Excel/source was imported with wrong encoding).
-                for p in self.products:
-                    if isinstance(p, dict):
-                        if "name" in p:
-                            p["name"] = _repair_mojibake_utf8_as_cp1251(p.get("name") or "")
-                        if "comment" in p:
-                            p["comment"] = _repair_mojibake_utf8_as_cp1251(p.get("comment") or "")
-                self.products.sort(key=lambda x: (x.get("name") or "").lower())
-            else:
-                self.products = []
+            sources = self._load_excel_sources()
+            active_paths = [s["path"] for s in sources if s.get("active") and os.path.isfile(s["path"])]
+            missing_files = [s["path"] for s in sources if s.get("active") and not os.path.isfile(s["path"])]
 
-            # загружаем сотрудников «изготовил»
-            if sheet_made:
-                self.staff_made = [s for s in load_staff(self.excel_path, sheet_made) if int(s.get("active", 0)) == 1]
-            else:
-                self.staff_made = []
+            # Fallback: если список активных пуст — используем self.excel_path как раньше
+            if not active_paths:
+                if os.path.isfile(self.excel_path):
+                    active_paths = [self.excel_path]
+                else:
+                    self.products = []
+                    self.staff_made = []
+                    self.staff_checked = []
+                    if not silent_errors:
+                        QMessageBox.warning(
+                            self,
+                            "Нет активных файлов",
+                            "В приложении нет активных Excel-файлов с данными.\n\n"
+                            "Нажмите «Добавить», чтобы добавить файл, "
+                            "затем включите его в «Активные».",
+                        )
+                    self.fill_products(current_product)
+                    self.fill_staff()
+                    return
 
-            # загружаем «цех»
-            if sheet_checked:
-                self.staff_checked = [s for s in load_staff(self.excel_path, sheet_checked) if int(s.get("active", 0)) == 1]
-            else:
-                self.staff_checked = []
+            all_products = []
+            all_made = []
+            all_checked = []
+            file_errors = []  # [(path, error_message), ...]
+
+            for path in active_paths:
+                try:
+                    resolved = self._resolve_sheet_names(path, silent=True)
+                    if resolved is None:
+                        file_errors.append((path, "В файле нет обязательных листов"))
+                        continue
+                    sheet_products, sheet_made, sheet_checked = resolved
+
+                    if sheet_products:
+                        products_all = load_products(path, sheet_name=sheet_products)
+                        active_products = [p for p in products_all if int(p.get("active", 0)) == 1]
+                        for p in active_products:
+                            if isinstance(p, dict):
+                                if "name" in p:
+                                    p["name"] = _repair_mojibake_utf8_as_cp1251(p.get("name") or "")
+                                if "comment" in p:
+                                    p["comment"] = _repair_mojibake_utf8_as_cp1251(p.get("comment") or "")
+                        all_products.append(active_products)
+
+                    if sheet_made:
+                        made_list = [s for s in load_staff(path, sheet_made) if int(s.get("active", 0)) == 1]
+                        all_made.append(made_list)
+
+                    if sheet_checked:
+                        checked_list = [s for s in load_staff(path, sheet_checked) if int(s.get("active", 0)) == 1]
+                        all_checked.append(checked_list)
+                except Exception as e:
+                    file_errors.append((path, str(e)))
+
+            # Слияние с дедупликацией
+            self.products = self._merge_products(all_products)
+            self.products.sort(key=lambda x: (x.get("name") or "").lower())
+
+            self.staff_made = self._merge_staff(all_made)
+            self.staff_checked = self._merge_staff(all_checked)
+
+            # Сообщения о проблемных файлах (только если несколько активных
+            # или если показ запрошен явно)
+            if not silent_errors:
+                problems = []
+                for p in missing_files:
+                    problems.append(f"• {p}\n  данные по файлу отсутствуют (файл не найден на диске)")
+                for p, err in file_errors:
+                    problems.append(f"• {p}\n  данные по файлу отсутствуют: {err}")
+                if problems and (show_message or len(active_paths) > 1):
+                    QMessageBox.warning(
+                        self,
+                        "Проблемы с некоторыми файлами",
+                        "Часть Excel-файлов не удалось прочитать:\n\n" + "\n\n".join(problems),
+                    )
 
             self.staff_made = [
                 {
@@ -3385,6 +3498,464 @@ class MirlisMarkApp(QWidget):
         os.makedirs(folder, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
+    # =================== Excel sources management (Этап B) ===================
+    # Хранится в settings.json как массив:
+    #   "excel_sources": [
+    #       {"path": "...", "active": true, "added_at": 1715800000.0}, ...
+    #   ]
+    # Логика загрузки данных пока работает с одним первым активным файлом
+    # (см. _current_active_excel_path); полноценное слияние будет в Этапе C.
+
+    REQUIRED_EXCEL_SHEETS = ("продукт", "изготовил", "цех")
+
+    def _load_excel_sources(self) -> list:
+        """Прочитать список Excel-источников из settings.json."""
+        settings = _load_settings()
+        sources = settings.get("excel_sources")
+        if not isinstance(sources, list):
+            return []
+        # Нормализация: оставляем только валидные записи
+        result = []
+        for s in sources:
+            if not isinstance(s, dict):
+                continue
+            path = str(s.get("path") or "").strip()
+            if not path:
+                continue
+            result.append({
+                "path": path,
+                "active": bool(s.get("active", True)),
+                "added_at": float(s.get("added_at") or 0.0),
+            })
+        return result
+
+    def _save_excel_sources(self, sources: list):
+        """Сохранить список Excel-источников в settings.json."""
+        settings = _load_settings()
+        settings["excel_sources"] = sources
+        _save_settings(settings)
+
+    def _validate_excel_file(self, path: str) -> tuple:
+        """Проверить, что файл существует и содержит все три обязательных листа.
+        Возвращает (ok, error_message). Если ok=True, error_message=''."""
+        if not path:
+            return (False, "Путь к файлу пустой.")
+        if not os.path.isfile(path):
+            return (False, f"Файл не найден:\n{path}")
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            sheet_names = [s.strip().lower() for s in wb.sheetnames]
+            wb.close()
+        except Exception as e:
+            return (False, f"Не удалось открыть Excel-файл:\n{e}")
+        missing = []
+        for required in self.REQUIRED_EXCEL_SHEETS:
+            if required.lower() not in sheet_names:
+                missing.append(f"«{required}»")
+        if missing:
+            return (False, "В выбранном файле нет обязательных листов: " + ", ".join(missing) + ".\nФайл не будет добавлен.")
+        return (True, "")
+
+    def _current_active_excel_path(self):
+        """Вернуть путь первого активного Excel-файла из списка (для совместимости
+        со старой логикой, которая работает с одним файлом). На Этапе C это будет
+        заменено на слияние данных из всех активных файлов."""
+        for s in self._load_excel_sources():
+            if s.get("active") and os.path.isfile(s.get("path", "")):
+                return s["path"]
+        return None
+
+    def _show_add_excel_help_dialog(self) -> bool:
+        """Показать инструкцию по структуре Excel перед добавлением файла.
+        Возвращает True если пользователь нажал «Выбрать файл», иначе False."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Структура файла Excel")
+        dlg.setMinimumSize(700, 500)
+        dlg.resize(750, 600)
+
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(0, 0, 0, 12)
+        dlg_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        QScroller.grabGesture(scroll.viewport(), QScroller.TouchGesture)
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: #ffffff; }")
+
+        content = QWidget()
+        content.setStyleSheet("background: #ffffff;")
+        lay = QVBoxLayout(content)
+        lay.setContentsMargins(28, 24, 28, 24)
+        lay.setSpacing(16)
+
+        def add_title(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: #111827; background: transparent;")
+            lbl.setWordWrap(True)
+            lay.addWidget(lbl)
+
+        def add_text(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size: 14px; color: #374151; background: transparent;")
+            lbl.setWordWrap(True)
+            lay.addWidget(lbl)
+
+        def add_image(path, max_width=640):
+            if not os.path.isfile(path):
+                return
+            lbl = QLabel()
+            lbl.setStyleSheet("background: transparent;")
+            pix = QPixmap(path)
+            if not pix.isNull():
+                if pix.width() > max_width:
+                    pix = pix.scaledToWidth(max_width, Qt.SmoothTransformation)
+                lbl.setPixmap(pix)
+            lay.addWidget(lbl)
+
+        def add_separator():
+            sep = QFrame()
+            sep.setFrameShape(QFrame.HLine)
+            sep.setStyleSheet("color: #e5e7eb; background: #e5e7eb; border: none; max-height: 1px;")
+            lay.addWidget(sep)
+
+        # Hero
+        hero_lbl = QLabel()
+        hero_lbl.setStyleSheet("background: transparent;")
+        hero_lbl.setAlignment(Qt.AlignHCenter)
+        hero_pix = QPixmap(HAPPY_HERO_PATH)
+        if not hero_pix.isNull():
+            hero_pix = hero_pix.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            hero_lbl.setPixmap(hero_pix)
+            lay.addWidget(hero_lbl)
+
+        add_title("Структура файла Excel")
+        add_text(
+            "Файл должен содержать 3 листа с точными названиями: «продукт», «изготовил», «цех».\n"
+            "Первая строка каждого листа — заголовки колонок, данные начинаются со второй строки."
+        )
+
+        add_separator()
+        add_text("Внизу файла должны быть видны 3 вкладки:")
+        add_image(HELP_IMG_TABS)
+
+        add_separator()
+        add_title("1. Лист «продукт»")
+        add_text(
+            "Заголовки: Код | Наименование | Срок годности (ч) | Ед. измер. | Активен | Комментарий\n\n"
+            "• «Ед. измер.» — через запятую: кг, шт или кг,шт\n"
+            "• «Активен» — Да или 1 (показывать), Нет или 0 (скрыть)"
+        )
+        add_image(HELP_IMG_PRODUCT)
+
+        add_separator()
+        add_title("2. Лист «изготовил»")
+        add_text("Заголовки: ФИО | Активен")
+        add_image(HELP_IMG_MADE)
+
+        add_separator()
+        add_title("3. Лист «цех»")
+        add_text("Заголовки: Цех | Активен")
+        add_image(HELP_IMG_WORKSHOP)
+
+        add_separator()
+        add_text(
+            "Если в листе «изготовил» или «цех» только одна запись — "
+            "она подставится автоматически, и работнику не нужно будет её выбирать каждый раз."
+        )
+
+        scroll.setWidget(content)
+        dlg_layout.addWidget(scroll, 1)
+
+        # Кнопки внизу
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(20, 0, 20, 0)
+        btn_row.setSpacing(12)
+        btn_row.addStretch(1)
+
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.setMinimumHeight(40)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.clicked.connect(dlg.reject)
+
+        btn_ok = QPushButton("Выбрать файл")
+        btn_ok.setMinimumHeight(40)
+        btn_ok.setCursor(Qt.PointingHandCursor)
+        btn_ok.setStyleSheet(
+            "QPushButton { background: #16a34a; color: #ffffff; font-weight: 700; "
+            "border: 1px solid #15803d; border-radius: 12px; padding: 8px 24px; }"
+            "QPushButton:hover { background: #15803d; }"
+        )
+        btn_ok.clicked.connect(dlg.accept)
+
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_ok)
+        dlg_layout.addLayout(btn_row)
+
+        return dlg.exec_() == QDialog.Accepted
+
+    def _on_add_excel(self):
+        """Кнопка «Добавить»: выбрать Excel-файл, проверить листы, добавить в список."""
+        # Сначала показываем инструкцию о структуре файла
+        if not self._show_add_excel_help_dialog():
+            return
+
+        start_dir = os.path.dirname(self.excel_path) if getattr(self, "excel_path", "") else ""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите Excel-файл",
+            start_dir,
+            "Excel-файлы (*.xlsx *.xlsm);;Все файлы (*.*)",
+        )
+        if not path:
+            return
+        path = os.path.normpath(path)
+
+        # Проверка на дубликат
+        sources = self._load_excel_sources()
+        for s in sources:
+            if os.path.normcase(os.path.normpath(s["path"])) == os.path.normcase(path):
+                QMessageBox.information(
+                    self,
+                    "Файл уже добавлен",
+                    f"Этот файл уже есть в списке приложения:\n{path}",
+                )
+                return
+
+        # Валидация листов
+        ok, err = self._validate_excel_file(path)
+        if not ok:
+            QMessageBox.warning(self, "Файл не подходит", err)
+            return
+
+        # Добавить в список (активным по умолчанию)
+        sources.append({
+            "path": path,
+            "active": True,
+            "added_at": time.time(),
+        })
+        self._save_excel_sources(sources)
+
+        QMessageBox.information(
+            self,
+            "Файл добавлен",
+            f"Файл добавлен в список приложения и помечен активным:\n{path}\n\n"
+            f"Нажмите «Обновить», чтобы перечитать данные.",
+        )
+
+    def _on_delete_excel(self):
+        """Кнопка «Удалить»: показать список добавленных файлов с возможностью удаления.
+        С диска НЕ удаляется."""
+        sources = self._load_excel_sources()
+        if not sources:
+            QMessageBox.information(
+                self,
+                "Список пуст",
+                "В приложении пока нет добавленных Excel-файлов.\n\nНажмите «Добавить», чтобы добавить файл.",
+            )
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Удалить Excel-файл из списка")
+        dlg.setMinimumSize(640, 380)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 16)
+        lay.setSpacing(12)
+
+        info = QLabel(
+            "Выберите файл, который нужно убрать из списка приложения.\n"
+            "Сам файл на диске НЕ удаляется."
+        )
+        info.setStyleSheet("font-size: 13px; color: #374151; background: transparent;")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        list_widget = QListWidget()
+        list_widget.setStyleSheet(
+            "QListWidget { border: 1px solid #d1d5db; border-radius: 10px; background: #ffffff; }"
+            "QListWidget::item { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; }"
+            "QListWidget::item:selected { background: #fee2e2; color: #991b1b; }"
+        )
+        for s in sources:
+            text = s["path"]
+            if not os.path.isfile(s["path"]):
+                text = text + "   (файл не найден на диске)"
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, s["path"])
+            list_widget.addItem(item)
+        lay.addWidget(list_widget, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setMinimumHeight(40)
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+
+        delete_btn = ActionBtn("Удалить из списка", kind="danger")
+        delete_btn.setMinimumHeight(40)
+        btn_row.addWidget(delete_btn)
+        lay.addLayout(btn_row)
+
+        def _do_delete():
+            cur = list_widget.currentItem()
+            if cur is None:
+                QMessageBox.information(dlg, "Не выбран файл", "Выберите файл в списке.")
+                return
+            target_path = cur.data(Qt.UserRole)
+            reply = QMessageBox.question(
+                dlg,
+                "Подтверждение",
+                f"Убрать файл из списка приложения?\n\n{target_path}\n\nСам файл на диске НЕ удаляется.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            new_sources = [s for s in self._load_excel_sources()
+                           if os.path.normcase(os.path.normpath(s["path"])) !=
+                              os.path.normcase(os.path.normpath(target_path))]
+            self._save_excel_sources(new_sources)
+            row = list_widget.row(cur)
+            list_widget.takeItem(row)
+            if list_widget.count() == 0:
+                dlg.accept()
+
+        delete_btn.clicked.connect(_do_delete)
+        dlg.exec_()
+
+    def _on_active_excel(self):
+        """Кнопка «Активные»: чек-лист всех добавленных файлов с галочками."""
+        sources = self._load_excel_sources()
+        if not sources:
+            QMessageBox.information(
+                self,
+                "Список пуст",
+                "В приложении пока нет добавленных Excel-файлов.\n\nНажмите «Добавить», чтобы добавить файл.",
+            )
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Активные Excel-файлы")
+        dlg.setMinimumSize(640, 420)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 16)
+        lay.setSpacing(12)
+
+        info = QLabel(
+            "Отметьте галочкой файлы, которые приложение должно использовать.\n"
+            "После сохранения нажмите «Обновить» в главном окне, чтобы перечитать данные."
+        )
+        info.setStyleSheet("font-size: 13px; color: #374151; background: transparent;")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        list_widget = QListWidget()
+        list_widget.setStyleSheet(
+            "QListWidget { border: 1px solid #d1d5db; border-radius: 10px; background: #ffffff; }"
+            "QListWidget::item { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; }"
+        )
+        for s in sources:
+            text = s["path"]
+            if not os.path.isfile(s["path"]):
+                text = text + "   (файл не найден на диске)"
+            item = QListWidgetItem(text)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if s.get("active") else Qt.Unchecked)
+            item.setData(Qt.UserRole, s["path"])
+            list_widget.addItem(item)
+        lay.addWidget(list_widget, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setMinimumHeight(40)
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+
+        save_btn = ActionBtn("Сохранить", kind="primary")
+        save_btn.setMinimumHeight(40)
+        btn_row.addWidget(save_btn)
+        lay.addLayout(btn_row)
+
+        def _do_save():
+            current_sources = self._load_excel_sources()
+            by_path = {os.path.normcase(os.path.normpath(s["path"])): s
+                       for s in current_sources}
+            for i in range(list_widget.count()):
+                it = list_widget.item(i)
+                p = it.data(Qt.UserRole)
+                key = os.path.normcase(os.path.normpath(p))
+                if key in by_path:
+                    by_path[key]["active"] = (it.checkState() == Qt.Checked)
+            new_sources = list(by_path.values())
+            self._save_excel_sources(new_sources)
+            dlg.accept()
+
+        save_btn.clicked.connect(_do_save)
+        dlg.exec_()
+
+    def _ensure_default_excel_source_present(self):
+        """Однократная миграция: если текущий self.excel_path не присутствует
+        в excel_sources, добавить его как активный. Это гарантирует, что после
+        обновления приложения исходный файл не «пропадёт» из загрузки."""
+        try:
+            cur_path = getattr(self, "excel_path", "") or ""
+            if not cur_path or not os.path.isfile(cur_path):
+                return
+            sources = self._load_excel_sources()
+            cur_norm = os.path.normcase(os.path.normpath(cur_path))
+            for s in sources:
+                if os.path.normcase(os.path.normpath(s["path"])) == cur_norm:
+                    return  # уже есть — ничего не делаем
+            sources.append({
+                "path": cur_path,
+                "active": True,
+                "added_at": time.time(),
+            })
+            self._save_excel_sources(sources)
+        except Exception as e:
+            sys.stderr.write(f"[MirlisMark] Default excel source migration error: {e}\n")
+
+    def _merge_products(self, product_lists: list) -> list:
+        """Слить продукты из нескольких файлов с дедупликацией.
+        Дубликат = совпадение (name, shelf_life_hours, allowed_units).
+        Любое различие хотя бы в одном поле делает продукты разными — оба остаются."""
+        seen = set()
+        result = []
+        for products in product_lists:
+            for p in products:
+                name = (p.get("name") or "").strip()
+                if not name:
+                    continue
+                life = int(p.get("shelf_life_hours") or 0)
+                units = tuple(sorted([str(u).strip().lower() for u in (p.get("allowed_units") or [])]))
+                key = (name.strip().lower(), life, units)
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append(p)
+        return result
+
+    def _merge_staff(self, staff_lists: list) -> list:
+        """Слить сотрудников/цехи из нескольких файлов с дедупликацией по имени.
+        Дубликат = полное совпадение значения name/fio (case-insensitive после strip)."""
+        seen = set()
+        result = []
+        for staff in staff_lists:
+            for s in staff:
+                fio = (s.get("name") or s.get("fio") or "").strip()
+                if not fio:
+                    continue
+                key = fio.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append(s)
+        return result
+
     def _open_statistics(self):
         """Открыть страницу статистики."""
         if hasattr(self, "content_stack") and hasattr(self, "stats_page"):
@@ -3420,7 +3991,14 @@ class MirlisMarkApp(QWidget):
         enabled = bool(enabled)
         self._statistics_mode = enabled
 
-        for b in (getattr(self, "reload_btn", None), getattr(self, "open_folder_btn", None), getattr(self, "choose_path_btn", None), getattr(self, "stats_btn", None)):
+        for b in (
+            getattr(self, "add_excel_btn", None),
+            getattr(self, "active_excel_btn", None),
+            getattr(self, "files_caption", None),
+            getattr(self, "delete_excel_btn", None),
+            getattr(self, "reload_btn", None),
+            getattr(self, "stats_btn", None),
+        ):
             if b is not None:
                 b.setVisible(not enabled)
 
