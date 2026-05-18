@@ -22,6 +22,8 @@ import math
 import json
 import calendar
 from datetime import datetime
+import ctypes
+from ctypes import wintypes
 
 from statistics_page import StatisticsPage
 from resources import resource_path as _resource_path
@@ -94,6 +96,7 @@ from PyQt5.QtMultimediaWidgets import QVideoWidget
 from excel_loader import load_products, load_staff
 from label_logic import build_label, format_dt
 from printer import print_text_as_bitmap_tspl, print_raw
+from scale_reader import ScaleReader, SERIAL_AVAILABLE
 from openpyxl import load_workbook as _peek_workbook
 import win32print
 from stats_store import append_entry as _append_stats_entry
@@ -104,6 +107,33 @@ SCREEN_COMP_LDPI_BLEND = 0.55
 SCREEN_COMP_MIN = 0.78
 SCREEN_COMP_MANUAL_MULTIPLIER = 1.0
 SCREEN_COMP_DPR_EXTRA = 0.12
+
+
+def _is_foreground_window_tabtip():
+    """
+    Возвращает True, если активное окно Windows — сенсорная клавиатура
+    (TabTip / TouchKeyboard / IME-pad). Используется чтобы игнорировать
+    кратковременную деактивацию нашего окна при печати на OSK.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        # Имя класса окна
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buf, 256)
+        cls = buf.value or ""
+        # Известные классы окон сенсорной клавиатуры Windows
+        known = (
+            "IPTip_Main_Window",        # TabTip (Windows 10)
+            "Windows.UI.Core.CoreWindow",  # Touch Keyboard (Windows 11)
+            "ApplicationFrameWindow",   # обёртка некоторых UWP touch input
+            "InputApp",                 # Windows 11 IME
+        )
+        return any(k in cls for k in known)
+    except Exception:
+        return False
 
 
 # -------------------- ПУТИ: ресурсы и пользовательские данные --------------------
@@ -379,8 +409,54 @@ class ComboBoxFixedArrow(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("ComboWithArrow")
+        QTimer.singleShot(0, self._wire_completer_explicit_close)
+
+    def _wire_completer_explicit_close(self):
+        try:
+            comp = self.completer()
+            if comp is not None:
+                comp.activated.connect(lambda *_: setattr(self, "_explicit_close", True))
+        except Exception:
+            pass
 
     def showPopup(self):
+        # Editable combo с completer: ВСЕГДА работаем через completer-popup,
+        # никогда не показываем super().showPopup() (полный список).
+        # Полный список допустим только если поле ввода пустое.
+        try:
+            if self.isEditable() and self.completer() is not None:
+                le = self.lineEdit()
+                text = le.text().strip() if le is not None else ""
+                if text:
+                    comp = self.completer()
+                    cp = comp.popup()
+
+                    # 1) Completer-popup сейчас видим — клик по стрелке закрывает.
+                    if cp is not None and cp.isVisible():
+                        self._explicit_close = True
+                        cp.hide()
+                        return
+
+                    # 2) Completer-popup только что закрылся — toggle close: не открывать.
+                    import time as _t
+                    last_hide = getattr(self, "_completer_popup_last_hide_ts", 0)
+                    now = _t.time()
+                    if now - last_hide < 0.3:
+                        self._completer_popup_last_hide_ts = 0
+                        return
+
+                    # 3) Открываем completer с актуальным префиксом.
+                    # Жёстко переустанавливаем prefix и фильтрацию.
+                    try:
+                        comp.setCompletionPrefix(text)
+                    except Exception:
+                        pass
+                    comp.complete()
+                    return
+                # Поле ПУСТОЕ → разрешаем стандартный показ полного списка ниже.
+        except Exception:
+            pass
+
         super().showPopup()
         view = self.view()
         if view:
@@ -1312,6 +1388,18 @@ class MirlisMarkApp(QWidget):
 
         self.refresh_preview()
 
+    def event(self, ev):
+        # Гасим WindowDeactivate когда активируется TabTip — иначе Qt каскадирует
+        # FocusOut на lineEdit, completer закрывает popup, и при каждом нажатии
+        # клавиши OSK видно моргание popup'а.
+        try:
+            if ev.type() == QEvent.WindowDeactivate:
+                if _is_foreground_window_tabtip():
+                    return True
+        except Exception:
+            pass
+        return super().event(ev)
+
     # ---------------- STYLE ----------------
     def _apply_global_style(self):
         combo_btn_path = resource_path("assets/combo-btn.svg").replace("\\", "/")
@@ -2046,7 +2134,24 @@ class MirlisMarkApp(QWidget):
             props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
             scroller.setScrollerProperties(props)
         QScroller.grabGesture(self.unit_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
+
+        # Кнопка "Взвесить" — считать вес с весов через COM-порт
+        self.scale_btn = ActionBtn("Взвесить", kind="default")
+        self.scale_btn.setToolTip("Считать вес с весов через COM-порт")
+        self.scale_btn.setFocusPolicy(Qt.NoFocus)
+        _scales_pix = QPixmap(resource_path("assets/scales.png"))
+        if not _scales_pix.isNull():
+            _scales_pix = _scales_pix.scaledToHeight(28, Qt.SmoothTransformation)
+            self.scale_btn.setIcon(QIcon(_scales_pix))
+            self.scale_btn.setIconSize(QSize(28, 28))
+        self.scale_btn.setStyleSheet(
+            "#Btn_default { font-size: 18px; font-weight: 700; padding: 8px 14px; }"
+        )
+        self.scale_btn.clicked.connect(self._read_scale_weight)
+
         col_units.addWidget(self.unit_combo)
+        col_units.addSpacing(20)
+        col_units.addWidget(self.scale_btn)
         col_units.addStretch(1)
         grid.addLayout(col_units, 2)
 
@@ -2093,6 +2198,7 @@ class MirlisMarkApp(QWidget):
 
         qty_btn_row.addWidget(self.minus_btn, 1)
         qty_btn_row.addWidget(self.plus_btn, 1)
+        col_qty.addSpacing(20)
         col_qty.addLayout(qty_btn_row)
 
         grid.addLayout(col_qty, 3)  # фактическое соотношение col_units:col_qty = 2:3
@@ -2111,12 +2217,12 @@ class MirlisMarkApp(QWidget):
         left_layout.addLayout(grid)
 
         # Опустить блоки "Цех" / "Изготовил" / "Дата и время" ниже — добавим вертикальный отступ
-        left_layout.addSpacing(12)
+        left_layout.addSpacing(28)
 
-        lab_chk = QLabel("Цех")
-        lab_chk.setObjectName("FieldLabel")
-        lab_chk.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        left_layout.addWidget(lab_chk)
+        self.lab_chk = QLabel("Цех")
+        self.lab_chk.setObjectName("FieldLabel")
+        self.lab_chk.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        left_layout.addWidget(self.lab_chk)
 
         self.checked_combo = ComboBoxPopupDown()
         self.checked_combo.addItem("— не выбрано —")
@@ -2139,10 +2245,10 @@ class MirlisMarkApp(QWidget):
         self.checked_input.setVisible(False)
         left_layout.addWidget(self.checked_input)
 
-        lab_made = QLabel("Изготовил")
-        lab_made.setObjectName("FieldLabel")
-        lab_made.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        left_layout.addWidget(lab_made)
+        self.lab_made = QLabel("Изготовил")
+        self.lab_made.setObjectName("FieldLabel")
+        self.lab_made.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        left_layout.addWidget(self.lab_made)
 
         self.made_combo = ComboBoxFixedArrow()
         self.made_combo.addItem("— не выбрано —")
@@ -2193,15 +2299,6 @@ class MirlisMarkApp(QWidget):
 
         self.preview_header = PreviewHeaderLabel("Предпросмотр")
         right_layout.addWidget(self.preview_header, 0, Qt.AlignHCenter)
-
-        self.manual_mode_subtitle = QLabel("редактирование")
-        self.manual_mode_subtitle.setAlignment(Qt.AlignCenter)
-        self.manual_mode_subtitle.setStyleSheet(
-            "font-size: 12px; font-weight: 700; color: #ffffff; "
-            "background: #8b5cf6; border-radius: 8px; padding: 4px 10px; margin: 0;"
-        )
-        self.manual_mode_subtitle.setVisible(False)
-        right_layout.addWidget(self.manual_mode_subtitle, 0, Qt.AlignHCenter)
 
         # toolbar
         tb = QHBoxLayout()
@@ -2596,6 +2693,80 @@ class MirlisMarkApp(QWidget):
         Tablet-only: делаем выпадающие списки QComboBox удобными для тач-ввода.
         Важно: влияет только на popup/list view, не увеличивает весь UI целиком.
         """
+
+        # App-level фильтр: трекает timestamp последнего клика/тача ВНУТРИ окна
+        # приложения. Используется чтобы отличать "пользователь кликнул в UI"
+        # (popup должен закрыться навсегда) от "сенсорная клавиатура закрылась"
+        # (popup должен переоткрыться, если lineEdit с текстом).
+        if not hasattr(self, "_app_click_tracker_installed"):
+            class _AppClickTracker(QObject):
+                def __init__(self, win):
+                    super().__init__(win)
+                    self._win = win
+                def eventFilter(self, obj, event):
+                    et = event.type()
+                    if et in (QEvent.MouseButtonPress, QEvent.TouchBegin):
+                        try:
+                            w = self._win
+                            target_widget = None
+                            in_window = False
+                            if w is not None and hasattr(event, "globalPos"):
+                                pos = event.globalPos()
+                                tl = w.mapToGlobal(w.rect().topLeft())
+                                br = w.mapToGlobal(w.rect().bottomRight())
+                                in_window = (tl.x() <= pos.x() <= br.x() and tl.y() <= pos.y() <= br.y())
+                                try:
+                                    target_widget = QApplication.widgetAt(pos)
+                                except Exception:
+                                    target_widget = None
+                            else:
+                                in_window = True
+
+                            if in_window:
+                                import time as _t
+                                self._win._last_app_user_click_ts = _t.time()
+                                self._win._last_app_user_click_widget = target_widget
+                                # Клик в чужой виджет → явное закрытие completer-popup.
+                                try:
+                                    if target_widget is not None:
+                                        for combo in self._win.findChildren(QComboBox):
+                                            if not isinstance(combo, ComboBoxFixedArrow):
+                                                continue
+                                            comp = combo.completer()
+                                            if comp is None:
+                                                continue
+                                            cp = comp.popup()
+                                            if cp is None or not cp.isVisible():
+                                                continue
+                                            le = combo.lineEdit()
+                                            if le is not None:
+                                                try:
+                                                    if target_widget is le or le.isAncestorOf(target_widget):
+                                                        continue
+                                                except Exception:
+                                                    pass
+                                            try:
+                                                if target_widget is cp or cp.isAncestorOf(target_widget):
+                                                    continue
+                                            except Exception:
+                                                pass
+                                            combo._explicit_close = True
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    return False
+
+            try:
+                app = QApplication.instance()
+                self._app_click_tracker = _AppClickTracker(self)
+                if app is not None:
+                    app.installEventFilter(self._app_click_tracker)
+                self._app_click_tracker_installed = True
+                self._last_app_user_click_ts = 0
+            except Exception:
+                pass
+
         class _TabletComboItemDelegate(QStyledItemDelegate):
             def __init__(self, parent=None, min_h: int = 54):
                 super().__init__(parent)
@@ -2879,6 +3050,135 @@ class MirlisMarkApp(QWidget):
                 except Exception:
                     pass
 
+                # Tablet: стилизуем popup QCompleter (например, product_combo при вводе текста)
+                try:
+                    comp = combo.completer() if hasattr(combo, "completer") else None
+                    if comp is not None and comp.completionMode() == QCompleter.PopupCompletion:
+                        cp = comp.popup()
+                        if cp is not None:
+                            # Защита от "popup поверх других приложений":
+                            # явно ставим флаги Qt.Popup + FramelessWindowHint.
+                            # WindowStaysOnTopHint НЕ ставится.
+                            try:
+                                cp.setWindowFlags(
+                                    Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+                                )
+                            except Exception:
+                                pass
+                            # тот же QSS, что у основного view
+                            cp.setStyleSheet(_lv_qss)
+                            cp.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                            cp.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                            # шрифт того же размера
+                            cf = cp.font()
+                            cf.setPointSize(max(cf.pointSize(), 12))
+                            cp.setFont(cf)
+                            # тот же делегат с min_h=54, чтобы строки были крупными
+                            cp.setItemDelegate(_TabletComboItemDelegate(cp, min_h=54))
+                            # кастомный жёлтый скроллбар
+                            old_sb = cp.verticalScrollBar()
+                            if old_sb is not None and not isinstance(old_sb, _StyledScrollBar):
+                                cp.setVerticalScrollBar(_StyledScrollBar(cp))
+                            # Event filter: переустанавливаем _StyledScrollBar каждый раз
+                            # при показе popup'а completer'а (Qt может пересоздавать scrollbar
+                            # при пересчёте модели после фильтрации).
+                            class _CompleterPopupFilter(QObject):
+                                """
+                                Отслеживает Show/Hide событий popup'а QCompleter.
+                                - Show: переустанавливает кастомный _StyledScrollBar.
+                                - Hide: пишет timestamp на combo.
+                                """
+                                def __init__(self, popup, combo, parent=None):
+                                    super().__init__(parent)
+                                    self._popup = popup
+                                    self._combo = combo
+                                def eventFilter(self, obj, event):
+                                    if obj is self._popup:
+                                        # Блокируем закрытие popup'а от focus loss / window deactivation
+                                        # когда активным становится окно сенсорной клавиатуры Windows.
+                                        if event.type() in (QEvent.FocusOut, QEvent.WindowDeactivate):
+                                            try:
+                                                if _is_foreground_window_tabtip():
+                                                    return True  # eat — popup не реагирует на OSK
+                                            except Exception:
+                                                pass
+                                            # FocusOut от обычной потери фокуса (другой виджет, USB-клава)
+                                            # — пропускаем дальше, popup закроется естественно.
+                                            if event.type() == QEvent.FocusOut:
+                                                return True
+                                        if event.type() == QEvent.Hide:
+                                            try:
+                                                import time as _t
+                                                self._combo._completer_popup_last_hide_ts = _t.time()
+                                            except Exception:
+                                                pass
+                                            try:
+                                                if not getattr(self._combo, "_explicit_close", False):
+                                                    # неявное закрытие — отменяем
+                                                    combo_ref = self._combo
+                                                    def _undo_hide():
+                                                        try:
+                                                            le = combo_ref.lineEdit()
+                                                            if le is None:
+                                                                return
+                                                            text = le.text().strip()
+                                                            if not text:
+                                                                return
+                                                            # Если за это время пользователь
+                                                            # явно кликнул в другой виджет — не возвращаем.
+                                                            if getattr(combo_ref, "_explicit_close", False):
+                                                                combo_ref._explicit_close = False
+                                                                return
+                                                            comp = combo_ref.completer()
+                                                            if comp is None:
+                                                                return
+                                                            comp.setCompletionPrefix(text)
+                                                            comp.complete()
+                                                        except Exception:
+                                                            pass
+                                                    QTimer.singleShot(0, _undo_hide)
+                                            except Exception:
+                                                pass
+                                            # Не возвращаем True (Hide нельзя есть), просто планируем re-open сразу
+                                        if event.type() == QEvent.Show:
+                                            try:
+                                                sb = self._popup.verticalScrollBar()
+                                                if sb is not None and not isinstance(sb, _StyledScrollBar):
+                                                    self._popup.setVerticalScrollBar(_StyledScrollBar(self._popup))
+                                            except Exception:
+                                                pass
+                                            # Принудительно синхронизируем prefix completer'а
+                                            # с текстом lineEdit'а — это страхует от случаев,
+                                            # когда Qt по какой-то причине открывает completer
+                                            # с пустым/устаревшим prefix'ом (отсюда "полный список").
+                                            try:
+                                                comp_here = self._combo.completer()
+                                                le_here = self._combo.lineEdit()
+                                                if comp_here is not None and le_here is not None:
+                                                    cur_text = le_here.text().strip()
+                                                    if cur_text and comp_here.completionPrefix() != cur_text:
+                                                        comp_here.setCompletionPrefix(cur_text)
+                                            except Exception:
+                                                pass
+                                    return False
+
+                            if not hasattr(self, "_completer_popup_filters"):
+                                self._completer_popup_filters = []
+                            flt = _CompleterPopupFilter(cp, combo, cp)
+                            cp.installEventFilter(flt)
+                            self._completer_popup_filters.append(flt)
+                            # тач-скролл для completer popup
+                            cp.viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
+                            scroller = QScroller.scroller(cp.viewport())
+                            if scroller:
+                                props = scroller.scrollerProperties()
+                                props.setScrollMetric(QScrollerProperties.ScrollingCurve, QEasingCurve.OutQuad)
+                                props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
+                                scroller.setScrollerProperties(props)
+                            QScroller.grabGesture(cp.viewport(), QScroller.LeftMouseButtonGesture)
+                except Exception:
+                    pass
+
                 # Убираем системную рамку/тень контейнера popup (tablet)
                 try:
                     popup = lv.window()
@@ -2941,8 +3241,8 @@ class MirlisMarkApp(QWidget):
         # Кнопки +/- рядом с полем количества (возле "Ед. изм.") — крупнее для тач-ввода
         try:
             if hasattr(self, "minus_btn") and hasattr(self, "qty_input") and hasattr(self, "plus_btn"):
-                h = 72  # оставляем высоту как сейчас
-                w_btn = 72  # было 90; -20%
+                h = 96      # было 72, делаем выше для тач-удобства
+                w_btn = 120  # было 72, делаем шире (длиннее по горизонтали)
                 self.minus_btn.setFixedWidth(w_btn)
                 self.plus_btn.setFixedWidth(w_btn)
                 self.minus_btn.setMinimumHeight(h)
@@ -2960,6 +3260,16 @@ class MirlisMarkApp(QWidget):
                 self.qty_input.setStyleSheet(
                     "QLineEdit { font-size: 28px; font-weight: 600; padding: 4px 10px; }"
                 )
+        except Exception:
+            pass
+
+        # «Взвесить» — уже компактнее по ширине, выше для тач-нажатия
+        try:
+            if hasattr(self, "scale_btn") and self.scale_btn is not None:
+                self.scale_btn.setMinimumHeight(90)
+                self.scale_btn.setMaximumHeight(90)
+                self.scale_btn.setMinimumWidth(0)
+                self.scale_btn.setMaximumWidth(220)
         except Exception:
             pass
 
@@ -3093,8 +3403,31 @@ class MirlisMarkApp(QWidget):
                 return
         self.logo.setText("")
 
+    def _lock_window_size_against_osk(self):
+        """
+        Запоминает фактический размер окна после showMaximized() и блокирует
+        дальнейшие ресайзы. Нужно, чтобы Windows-сенсорная клавиатура не
+        поджимала окно по высоте — иначе layout схлопывается.
+        """
+        try:
+            geom = self.geometry()
+            self._locked_window_geom = geom
+            # Минимальный размер = текущий, чтобы Windows не мог сделать окно меньше.
+            # Максимальный не ставим (вдруг юзер развернёт между мониторами).
+            self.setMinimumSize(geom.width(), geom.height())
+        except Exception:
+            pass
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        try:
+            locked = getattr(self, "_locked_window_geom", None)
+            if locked is not None:
+                cur = self.geometry()
+                if cur.width() < locked.width() or cur.height() < locked.height():
+                    QTimer.singleShot(0, lambda: self.setGeometry(locked))
+        except Exception:
+            pass
         self._resize_label_preview()
         if hasattr(self, "history_panel"):
             self.history_panel.setVisible(self.width() >= 1100)
@@ -3258,10 +3591,75 @@ class MirlisMarkApp(QWidget):
         on = self._preview_manual_mode
         self.manual_datetime_label.setVisible(on)
         self.manual_datetime_picker.setVisible(on)
-        self.manual_mode_subtitle.setVisible(on)
+        self._apply_preview_header_style(on)
+        self._set_made_checked_blocks_visible(not on)
         self.preview.setReadOnly(not on)
         self._user_edited_preview = False
         self.refresh_preview()
+
+    def _set_made_checked_blocks_visible(self, visible: bool):
+        """
+        Скрывает или показывает блоки 'Изготовил' и 'Цех' целиком (лейблы +
+        комбобоксы + чекбоксы 'Ручной ввод' + поля ручного ввода).
+        При показе видимость combo/input восстанавливается по состоянию
+        соответствующих чекбоксов 'Ручной ввод'.
+        """
+        if not visible:
+            # Скрываем всё — режим редактирования preview
+            for name in ("lab_made", "made_combo", "made_manual", "made_input",
+                         "lab_chk", "checked_combo", "checked_manual", "checked_input"):
+                w = getattr(self, name, None)
+                if w is not None:
+                    w.setVisible(False)
+            return
+
+        # Возвращаем блоки в обычный режим:
+        # - лейблы и чекбоксы 'Ручной ввод' всегда видимы
+        # - combo/input — по состоянию чекбокса
+        if hasattr(self, "lab_made") and self.lab_made is not None:
+            self.lab_made.setVisible(True)
+        if hasattr(self, "made_manual") and self.made_manual is not None:
+            self.made_manual.setVisible(True)
+        made_manual_on = bool(self.made_manual.isChecked()) if hasattr(self, "made_manual") else False
+        if hasattr(self, "made_combo") and self.made_combo is not None:
+            self.made_combo.setVisible(not made_manual_on)
+        if hasattr(self, "made_input") and self.made_input is not None:
+            self.made_input.setVisible(made_manual_on)
+
+        if hasattr(self, "lab_chk") and self.lab_chk is not None:
+            self.lab_chk.setVisible(True)
+        if hasattr(self, "checked_manual") and self.checked_manual is not None:
+            self.checked_manual.setVisible(True)
+        checked_manual_on = bool(self.checked_manual.isChecked()) if hasattr(self, "checked_manual") else False
+        if hasattr(self, "checked_combo") and self.checked_combo is not None:
+            self.checked_combo.setVisible(not checked_manual_on)
+        if hasattr(self, "checked_input") and self.checked_input is not None:
+            self.checked_input.setVisible(checked_manual_on)
+
+    def _apply_preview_header_style(self, manual_mode: bool):
+        """
+        Переключает внешний вид заголовка над предпросмотром:
+        - normal: серая плашка с текстом "Предпросмотр" (как обычно, стиль из глобального QSS)
+        - manual_mode: фиолетовая плашка с текстом "Редактирование"
+        """
+        if manual_mode:
+            self.preview_header.setText("Редактирование")
+            self.preview_header.setStyleSheet(
+                "#SectionTitle {"
+                " background: #8b5cf6;"
+                " border-radius: 14px;"
+                " padding: 10px 22px;"
+                " font-family: 'Inter','Segoe UI','Manrope','Arial',sans-serif;"
+                " font-size: 22px;"
+                " font-weight: 650;"
+                " letter-spacing: 0.2px;"
+                " color: #ffffff;"
+                "}"
+            )
+        else:
+            self.preview_header.setText("Предпросмотр")
+            # Сброс локального QSS — возвращается стиль из глобального QSS (#SectionTitle)
+            self.preview_header.setStyleSheet("")
 
     def _resolve_sheet_names(self, excel_path, silent: bool = False):
         """
@@ -4538,6 +4936,101 @@ class MirlisMarkApp(QWidget):
         unit_ru = self.unit_combo.currentText()
         return 1.0 if unit_ru == "шт" else 0.1
 
+    # ─── Весы (COM-порт, автоопределение) ───────────────────
+    _SCALE_BAUD = 9600
+    _scale_reader = None     # инстанс ScaleReader
+
+    def _read_scale_weight(self):
+        """Запускает фоновое автоопределение порта весов и считывание веса."""
+        if not SERIAL_AVAILABLE:
+            QMessageBox.warning(
+                self, "Весы",
+                "Модуль pyserial не установлен.\n"
+                "Выполните: python -m pip install pyserial"
+            )
+            return
+        if self._scale_reader is not None and self._scale_reader.isRunning():
+            return  # уже идёт чтение — игнорируем повторный клик
+
+        self.scale_btn.setEnabled(False)
+        self.scale_btn.setText("Поиск весов...")
+
+        # Подтянуть сохранённый порт (если уже находили ранее) — это ускорит запуск
+        preferred = ""
+        try:
+            preferred = str(_load_settings().get("scale_port", "") or "")
+        except Exception:
+            preferred = ""
+
+        self._scale_reader = ScaleReader(
+            preferred_port=preferred,
+            baud=self._SCALE_BAUD,
+            per_port_timeout=1.5,
+            saved_port_timeout=2.5,
+            parent=self,
+        )
+        self._scale_reader.weight_received.connect(self._on_scale_weight)
+        self._scale_reader.raw_received.connect(
+            lambda msg: sys.stderr.write(f"[Scale] {msg}\n")
+        )
+        self._scale_reader.error_occurred.connect(self._on_scale_error)
+        self._scale_reader.progress.connect(self._on_scale_progress)
+        self._scale_reader.port_found.connect(self._on_scale_port_found)
+        self._scale_reader.finished.connect(self._on_scale_done)
+        self._scale_reader.start()
+
+    def _on_scale_weight(self, value: float):
+        """Подставляет считанный вес в qty_input."""
+        try:
+            idx_kg = self.unit_combo.findText("кг")
+            if idx_kg >= 0 and self.unit_combo.currentIndex() != idx_kg:
+                self.unit_combo.setCurrentIndex(idx_kg)
+        except Exception:
+            pass
+        text = str(round(float(value), 3)).rstrip("0").rstrip(".")
+        if not text:
+            text = "0"
+        self.qty_input.setText(text)
+        try:
+            self.refresh_preview()
+        except Exception:
+            pass
+
+    def _on_scale_error(self, msg: str):
+        QMessageBox.warning(self, "Весы — ошибка", msg)
+
+    def _on_scale_progress(self, msg: str):
+        """Показывает текущий проверяемый порт прямо на кнопке."""
+        try:
+            self.scale_btn.setText(msg)
+        except Exception:
+            pass
+
+    def _on_scale_port_found(self, port: str):
+        """Сохраняет найденный рабочий порт для быстрого запуска в будущем."""
+        try:
+            s = _load_settings()
+            if s.get("scale_port") != port:
+                s["scale_port"] = port
+                _save_settings(s)
+                sys.stderr.write(f"[Scale] Сохранён рабочий порт: {port}\n")
+        except Exception as e:
+            sys.stderr.write(f"[Scale] Не удалось сохранить порт: {e}\n")
+
+    def _on_scale_done(self):
+        """Восстанавливает кнопку после завершения чтения."""
+        self.scale_btn.setEnabled(True)
+        self.scale_btn.setText("Взвесить")
+        # Восстановить иконку (Qt сбрасывает её при setText в некоторых стилях — на всякий случай)
+        try:
+            _pix = QPixmap(resource_path("assets/scales.png"))
+            if not _pix.isNull():
+                _pix = _pix.scaledToHeight(28, Qt.SmoothTransformation)
+                self.scale_btn.setIcon(QIcon(_pix))
+                self.scale_btn.setIconSize(QSize(28, 28))
+        except Exception:
+            pass
+
     def increase_qty(self):
         step = self._step_for_unit()
         try:
@@ -4853,8 +5346,6 @@ class MirlisMarkApp(QWidget):
         is_colored = hasattr(self, "label_size_combo") and self.label_size_combo.currentText() == "Цветные"
 
         if is_colored:
-            text_parts.append("")
-            text_parts.append("")
             text_parts.append("")
             text_parts.append("")
         else:
@@ -5502,6 +5993,12 @@ def main():
             except Exception as e:
                 sys.stderr.write(f"[MirlisMark] disable touch feedback: {e}\n")
         main_window.showMaximized()
+        # Защита от ресайза окна сенсорной клавиатурой Windows (TabTip)
+        # После того как окно развернулось — запоминаем размер и блокируем его.
+        try:
+            QTimer.singleShot(100, main_window._lock_window_size_against_osk)
+        except Exception:
+            pass
 
     video_path = SPLASH_VIDEO_PATH
     if os.path.isfile(video_path):
