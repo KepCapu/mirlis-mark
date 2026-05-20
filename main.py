@@ -2552,18 +2552,18 @@ class MirlisMarkApp(QWidget):
         pr.setSpacing(8)
 
         self.print_btn = ActionBtn("ПЕЧАТЬ", kind="primary")
+        self.print_btn.setMinimumWidth(360)
 
         self.copies_caption = QLabel("Количество")
         self.copies_caption.setObjectName("CopiesCaption")
         self.copies_caption.setAlignment(Qt.AlignCenter)
         self.copies_caption.setFocusPolicy(Qt.NoFocus)
-        self.copies_caption.setFixedWidth(
-            int(round(self.copies_caption.sizeHint().width() * 2.8))
-        )
+        self.copies_caption.setVisible(False)  # убран из UI, скрыт
         self.copies_minus = ActionBtn("−", kind="default")
         self.copies_minus.setFixedWidth(106)
-        self.copies_input = QLineEdit("1")
-        self.copies_input.setFixedWidth(94)
+        self.copies_input = QLineEdit("")
+        self.copies_input.setMinimumWidth(80)
+        self.copies_input.setMaximumWidth(160)   # не расползается — освобождает место под Печать
         self.copies_input.setAlignment(Qt.AlignCenter)
         self.copies_plus = ActionBtn("+", kind="default")
         self.copies_plus.setFixedWidth(106)
@@ -2595,15 +2595,15 @@ class MirlisMarkApp(QWidget):
         cw = QHBoxLayout(copies_wrap)
         cw.setContentsMargins(0, 0, 0, 0)
         cw.setSpacing(6)
-        cw.addWidget(self.copies_caption, 1)
+        # copies_caption убран — освобождает место под print_btn и copies_input
         cw.addWidget(self.copies_minus, 0)
-        cw.addWidget(self.copies_input, 0)
+        cw.addWidget(self.copies_input, 1)  # stretch=1: занимает всё свободное место
         cw.addWidget(self.copies_plus, 0)
 
-        for w in (self.print_btn, self.copies_caption, self.copies_minus, self.copies_plus, self.copies_input):
+        for w in (self.print_btn, self.copies_minus, self.copies_plus, self.copies_input):
             w.setMinimumHeight(68)
 
-        pr.addWidget(self.print_btn, 1)
+        pr.addWidget(self.print_btn, 2)
         pr.addWidget(copies_wrap, 1)
 
         center_panel_layout.addLayout(pr)
@@ -2723,6 +2723,7 @@ class MirlisMarkApp(QWidget):
 
         self.print_btn.clicked.connect(self.print_label)
         self.copies_input.textChanged.connect(self._sanitize_copies)
+        self.copies_input.textChanged.connect(lambda _: self._refresh_print_btn_state())
         self.label_size_combo.currentIndexChanged.connect(self._on_label_size_changed)
 
         self.preview.textChanged.connect(self._on_preview_text_changed)
@@ -3660,7 +3661,7 @@ class MirlisMarkApp(QWidget):
 
         self._user_edited_preview = False
         text, can_print = self._build_label_plain_text()
-        self.print_btn.setEnabled(can_print)
+        self._refresh_print_btn_state()
         self._set_preview_text_programmatically(text)
         QApplication.processEvents()
 
@@ -4957,12 +4958,12 @@ class MirlisMarkApp(QWidget):
             self._set_preview_html_programmatically(preview_html)
             self._user_edited_preview = True
             _, can_print = self._build_label_plain_text()
-            self.print_btn.setEnabled(can_print)
+            self._refresh_print_btn_state()
         elif isinstance(preview_text, str) and preview_text.strip():
             self._set_preview_text_programmatically(preview_text)
             self._user_edited_preview = True
             _, can_print = self._build_label_plain_text()
-            self.print_btn.setEnabled(can_print)
+            self._refresh_print_btn_state()
         else:
             self._user_edited_preview = False
             self.refresh_preview()
@@ -5140,6 +5141,8 @@ class MirlisMarkApp(QWidget):
 
         self.unit_combo.setCurrentIndex(0)
         self.qty_input.clear()
+        if hasattr(self, "copies_input"):
+            self.copies_input.clear()
 
         self.made_manual.setChecked(False)
         self.checked_manual.setChecked(False)
@@ -5436,7 +5439,7 @@ class MirlisMarkApp(QWidget):
         if getattr(self, "_loading_from_history", False):
             return
         text, can_print = self._build_label_plain_text()
-        self.print_btn.setEnabled(can_print)
+        self._refresh_print_btn_state()
 
         # Если текущая этикетка "пустая" (нет продукта / стандартное сообщение),
         # то история не должна держать подсветку выбранной карточки.
@@ -5589,19 +5592,39 @@ class MirlisMarkApp(QWidget):
 
     def _get_copies(self):
         if not hasattr(self, "copies_input"):
-            return 1
-        v = _safe_int(self.copies_input.text().strip(), 1)
-        return max(1, min(999, v))
+            return 0
+        txt = self.copies_input.text().strip()
+        if not txt:
+            return 0
+        v = _safe_int(txt, 0)
+        return max(0, min(9999, v))
+
+    def _refresh_print_btn_state(self):
+        """Обновляет доступность кнопки Печать с учётом и этикетки, и копий."""
+        if not hasattr(self, "print_btn"):
+            return
+        _, can_label = self._build_label_plain_text()
+        copies_ok = self._get_copies() > 0
+        self.print_btn.setEnabled(can_label and copies_ok)
 
     def _sanitize_copies(self):
         if not hasattr(self, "copies_input"):
             return
-        v = _safe_int(self.copies_input.text().strip(), 1)
-        v = max(1, min(999, v))
-        if self.copies_input.text().strip() != str(v):
+        txt = self.copies_input.text().strip()
+        # Разрешаем пустое поле — пользователь должен сам ввести количество.
+        if not txt:
+            self._refresh_print_btn_state()
+            return
+        # Убираем нецифровые символы, ограничиваем 1-999.
+        digits_only = "".join(c for c in txt if c.isdigit())
+        v = _safe_int(digits_only, 0)
+        v = max(0, min(9999, v))
+        corrected = str(v) if v > 0 else ""
+        if self.copies_input.text().strip() != corrected:
             self.copies_input.blockSignals(True)
-            self.copies_input.setText(str(v))
+            self.copies_input.setText(corrected)
             self.copies_input.blockSignals(False)
+        self._refresh_print_btn_state()
 
     def increase_copies(self):
         if not hasattr(self, "copies_input"):
