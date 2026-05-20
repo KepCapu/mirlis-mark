@@ -2039,7 +2039,22 @@ class MirlisMarkApp(QWidget):
         tools_layout.addWidget(self.reload_btn, 0, Qt.AlignVCenter)
         tools_layout.addStretch(1)
 
-        top_layout.addWidget(self.tools_frame, 4)
+        # Центр брови: tools_frame (печать) ИЛИ заголовок статистики — по режиму
+        center_cell = QWidget()
+        center_cell.setStyleSheet("background: transparent;")
+        center_cell_lay = QHBoxLayout(center_cell)
+        center_cell_lay.setContentsMargins(0, 0, 0, 0)
+        center_cell_lay.setSpacing(0)
+        center_cell_lay.addWidget(self.tools_frame, 1)
+        self.stats_title_lbl = QLabel("Статистика — День")
+        self.stats_title_lbl.setAlignment(Qt.AlignCenter)
+        self.stats_title_lbl.setStyleSheet(
+            'font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif; '
+            "font-size: 21px; font-weight: 700; color: #1E2F45; background: transparent;"
+        )
+        self.stats_title_lbl.setVisible(False)
+        center_cell_lay.addWidget(self.stats_title_lbl, 1)
+        top_layout.addWidget(center_cell, 4)
 
         # ===== Кнопка статистики (справа) =====
         self.stats_btn = ActionBtn("Статистика", kind="default")
@@ -4528,6 +4543,15 @@ class MirlisMarkApp(QWidget):
             if b is not None:
                 b.setVisible(not enabled)
 
+        # Заголовок статистики в брови виден только в режиме статистики
+        try:
+            if getattr(self, "stats_title_lbl", None) is not None:
+                self.stats_title_lbl.setVisible(enabled)
+                if enabled:
+                    self._sync_stats_title()
+        except Exception:
+            pass
+
         for b in (
             getattr(self, "day_btn", None),
             getattr(self, "week_btn", None),
@@ -4542,6 +4566,13 @@ class MirlisMarkApp(QWidget):
         if bd is not None:
             bd.setVisible(enabled and getattr(self.stats_page, "_detail_mode", False) if hasattr(self, "stats_page") else False)
 
+    def _sync_stats_title(self):
+        try:
+            if getattr(self, "stats_title_lbl", None) is not None and hasattr(self, "stats_page"):
+                self.stats_title_lbl.setText(self.stats_page.header.text())
+        except Exception:
+            pass
+
     def _set_statistics_period(self, period: str):
         """Выбор периода статистики: day/week/month/custom."""
         if period not in ("day", "week", "month", "custom"):
@@ -4549,11 +4580,13 @@ class MirlisMarkApp(QWidget):
         self._stats_period = period
         if hasattr(self, "stats_page") and hasattr(self.stats_page, "set_period"):
             self.stats_page.set_period(period)
+        self._sync_stats_title()
 
     def _open_statistics_custom_period(self):
         if hasattr(self, "stats_page") and hasattr(self.stats_page, "open_custom_period_dialog"):
             if self.stats_page.open_custom_period_dialog(self):
                 self._stats_period = "custom"
+                self._sync_stats_title()
 
     def choose_excel_path(self):
         # показываем инструкцию с картинками перед выбором файла

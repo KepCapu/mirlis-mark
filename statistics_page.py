@@ -1773,7 +1773,7 @@ class StatisticsPage(QWidget):
         self._current_detail_type = "products"
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 18, 18, 18)
+        root.setContentsMargins(18, 6, 18, 18)
         root.setSpacing(14)
 
         self.header = QLabel("Статистика — День")
@@ -1849,7 +1849,7 @@ class StatisticsPage(QWidget):
         if not self._detail_mode:
             return
         self._detail_mode = False
-        self.header.show()
+        self.header.setVisible(False)
         try:
             if getattr(self, "_stats_header_row", None) is not None:
                 self._stats_header_row.show()
@@ -2593,8 +2593,10 @@ class StatisticsPage(QWidget):
             pass
 
         header_row_lay.addWidget(self.header, 0, 1, Qt.AlignHCenter | Qt.AlignVCenter)
-        header_row_lay.addWidget(self.print_reports_btn, 0, 2, Qt.AlignRight | Qt.AlignVCenter)
-        grid.addWidget(self._stats_header_row, 0, 0, 1, 12, Qt.AlignBottom)
+        self.header.setVisible(False)  # заголовок показывается в брови (main.py), не в дашборде
+        # «Печать отчётов» — напрямую в сетку, правый верхний угол (ряд 0).
+        # Контейнер _stats_header_row в grid НЕ добавляем: заголовок скрыт (он в брови).
+        grid.addWidget(self.print_reports_btn, 0, 8, 1, 4, Qt.AlignRight | Qt.AlignTop)
 
         # KPI row (row 1)
         self.kpi_labels = _KpiCard("Этикеток", icon_path=ROLL_PATH)
@@ -2666,11 +2668,11 @@ class StatisticsPage(QWidget):
         self.kpi_day_shift = _CompactKpiCard("Дневная смена", icon_path=SUN_PATH)
         self.kpi_night_shift = _CompactKpiCard("Ночная смена", icon_path=MOON_PATH)
 
-        grid.addWidget(self.kpi_labels, 1, 0, 1, 2, Qt.AlignBottom)
-        grid.addWidget(self.kpi_ops, 1, 2, 1, 2, Qt.AlignBottom)
-        grid.addWidget(self.io_card, 1, 4, 1, 4)
-        grid.addWidget(self.kpi_day_shift, 1, 8, 1, 2, Qt.AlignBottom)
-        grid.addWidget(self.kpi_night_shift, 1, 10, 1, 2, Qt.AlignBottom)
+        grid.addWidget(self.kpi_labels, 1, 0, 1, 2, Qt.AlignTop)
+        grid.addWidget(self.kpi_ops, 1, 2, 1, 2, Qt.AlignTop)
+        grid.addWidget(self.io_card, 0, 4, 2, 4)
+        grid.addWidget(self.kpi_day_shift, 1, 8, 1, 2, Qt.AlignTop)
+        grid.addWidget(self.kpi_night_shift, 1, 10, 1, 2, Qt.AlignTop)
 
         # Middle wide chart
         self.time_card = _Card("Этикеток по часам")
