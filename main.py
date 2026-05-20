@@ -5115,14 +5115,6 @@ class MirlisMarkApp(QWidget):
             self.btn_align_right.setChecked(False)
             self.btn_align_right.blockSignals(False)
 
-        # дефолтный размер этикетки после «Очистить» — 70×70 мм
-        try:
-            if hasattr(self, "label_size_combo"):
-                self.label_size_combo.blockSignals(True)
-                self.label_size_combo.setCurrentIndex(2)
-                self.label_size_combo.blockSignals(False)
-        except Exception:
-            pass
         self.label_w_mm = 70.0
         self.label_h_mm = 70.0
         self._resize_label_preview()
@@ -5624,6 +5616,24 @@ class MirlisMarkApp(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         painter.scale(scale_x, scale_y)
+
+        # Для «Цветных» этикеток (приходят с типографии с верхней цветной
+        # полосой и днём недели) сдвигаем текст вниз на ~2 мм, чтобы первая
+        # строка не задевала эту полосу. Единицы painter после scale() —
+        # виртуальные пиксели PRINT_VIRTUAL_W; конвертация: 2 мм * (PRINT_VIRTUAL_W / w_mm).
+        # Превью НЕ затрагивается (его рендерит другой путь через QGraphicsView).
+        try:
+            _is_colored_print = (
+                hasattr(self, "label_size_combo")
+                and self.label_size_combo.currentText() == "Цветные"
+            )
+            if _is_colored_print and w_mm > 0:
+                _colored_top_offset_mm = 2.0   # ← одна цифра для подстройки
+                _colored_offset_virtual_px = PRINT_VIRTUAL_W * _colored_top_offset_mm / float(w_mm)
+                painter.translate(0.0, _colored_offset_virtual_px)
+        except Exception:
+            pass
+
         doc.drawContents(painter)
         painter.end()
 
