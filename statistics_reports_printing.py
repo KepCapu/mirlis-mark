@@ -1002,7 +1002,7 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
     # Slightly upscale for preview readability.
     base_w, base_h = (1123, 794) if landscape else (794, 1123)
     page_w, page_h = int(base_w * 1.12), int(base_h * 1.12)
-    margin = 48  # inner page padding (gives charts more width in preview)
+    margin = 30  # inner page padding (gives charts more width in preview)
     section_gap = 12
     content_w = page_w - margin * 2
     content_h = page_h - margin * 2
@@ -1718,16 +1718,29 @@ def print_pages_to_printer(printer: QPrinter, pages: list[QWidget]) -> None:
         for i, pg in enumerate(pages):
             if i > 0:
                 printer.newPage()
+            # На печати рамка-контур страницы не нужна (она только для предпросмотра)
+            _orig_qss = pg.styleSheet()
+            try:
+                pg.setStyleSheet("#A4Page { background: #ffffff; border: none; }")
+            except Exception:
+                pass
             w = max(1, pg.width())
             h = max(1, pg.height())
             sx = float(page_rect.width()) / float(w)
             sy = float(page_rect.height()) / float(h)
             scale = min(sx, sy)
+            # Центрируем страницу в области печати — симметричные поля со всех сторон
+            off_x = (float(page_rect.width()) - w * scale) / 2.0
+            off_y = (float(page_rect.height()) - h * scale) / 2.0
             painter.save()
-            painter.translate(page_rect.left(), page_rect.top())
+            painter.translate(page_rect.left() + off_x, page_rect.top() + off_y)
             painter.scale(scale, scale)
             pg.render(painter)
             painter.restore()
+            try:
+                pg.setStyleSheet(_orig_qss)
+            except Exception:
+                pass
     finally:
         painter.end()
 
