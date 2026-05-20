@@ -2380,6 +2380,11 @@ class MirlisMarkApp(QWidget):
 
         self.font_size_combo = ComboBoxFixedArrow()
         self.font_size_combo.setEditable(True)
+        # Убираем completer: ComboBoxFixedArrow.showPopup при editable+completer+
+        # непустом тексте уходит в completer-ветку и обычный выпадающий список
+        # НЕ открывается. Для списка размеров шрифта автодополнение не нужно.
+        # Должно стоять ПОСЛЕ setEditable(True) (он сам создаёт completer).
+        self.font_size_combo.setCompleter(None)
         self.font_size_combo.setFixedWidth(130)
         self.font_size_combo.addItems([str(s) for s in [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]])
         self.font_size_combo.setCurrentText(str(self._base_font_size))
@@ -2468,7 +2473,7 @@ class MirlisMarkApp(QWidget):
                 background: #ffffff;
                 border: 1px solid #cfd6e0;
                 border-radius: 18px;
-                padding: 18px;
+                padding: 18px 2px;
             }
             """
         )
