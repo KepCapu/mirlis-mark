@@ -2050,7 +2050,7 @@ class MirlisMarkApp(QWidget):
         self.stats_title_lbl.setAlignment(Qt.AlignCenter)
         self.stats_title_lbl.setStyleSheet(
             'font-family: "Inter","Segoe UI","Manrope","Arial",sans-serif; '
-            "font-size: 21px; font-weight: 700; color: #1E2F45; background: transparent;"
+            "font-size: 21px; font-weight: 700; color: #1E2F45; background: transparent; padding-left: 90px;"
         )
         self.stats_title_lbl.setVisible(False)
         center_cell_lay.addWidget(self.stats_title_lbl, 1)

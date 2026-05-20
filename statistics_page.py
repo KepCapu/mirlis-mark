@@ -381,7 +381,7 @@ _BAR_PALETTE_HEX = [
 
 
 class _Card(QFrame):
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent=None, center_header: bool = False):
         super().__init__(parent)
         self.setObjectName("StatsCard")
         self.setStyleSheet("background: #ffffff; border: 1px solid #e5e7eb; border-radius: 18px;")
@@ -401,7 +401,8 @@ class _Card(QFrame):
             f'font-family: {_STATS_FONT_FAMILY}; font-size: 17px; font-weight: 600; line-height: 20px; color: {_C_TITLE}; '
             "background: transparent; border: none; outline: none; padding: 0; margin: 0;"
         )
-        header_lay.addWidget(self.title_lbl, 1, Qt.AlignLeft | Qt.AlignVCenter)
+        _title_align = (Qt.AlignHCenter if center_header else Qt.AlignLeft) | Qt.AlignVCenter
+        header_lay.addWidget(self.title_lbl, 1, _title_align)
 
         self._header_right = QWidget()
         self._header_right.setStyleSheet("background: transparent; border: none;")
@@ -2603,7 +2604,7 @@ class StatisticsPage(QWidget):
         self.kpi_ops = _KpiCard("Операций", icon_path=PRINTER_PATH)
 
         # Import/Export module (Stage 6 UI polish)
-        self.io_card = _Card("Импорт и экспорт")
+        self.io_card = _Card("Импорт и экспорт", center_header=True)
         # Prevent any inner "boxed" border around the card body (only keep outer card border).
         try:
             self.io_card.body.setStyleSheet("background: transparent; border: none;")
@@ -2663,7 +2664,7 @@ class StatisticsPage(QWidget):
         tiles.addWidget(t_pkg, 1, 0)
         tiles.addWidget(t_sources, 1, 1)
 
-        self.io_card.body_lay.addWidget(io_sub, 0, Qt.AlignLeft)
+        self.io_card.body_lay.addWidget(io_sub, 0, Qt.AlignHCenter)
         self.io_card.body_lay.addLayout(tiles, 0)
         self.kpi_day_shift = _CompactKpiCard("Дневная смена", icon_path=SUN_PATH)
         self.kpi_night_shift = _CompactKpiCard("Ночная смена", icon_path=MOON_PATH)
