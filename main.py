@@ -2536,7 +2536,8 @@ class MirlisMarkApp(QWidget):
         self.label_size_combo.addItem("58×60 мм")
         self.label_size_combo.addItem("70×70 мм")
         self.label_size_combo.addItem("Цветные")
-        self.label_size_combo.setCurrentIndex(2)
+        _default_label_idx = 3 if getattr(self, "app_mode", "pc") == "tablet" else 2
+        self.label_size_combo.setCurrentIndex(_default_label_idx)
         self.label_size_combo.setMinimumWidth(140)
         label_size_row.addWidget(label_size_lab)
         label_size_row.addWidget(self.label_size_combo, 1)
@@ -5192,6 +5193,15 @@ class MirlisMarkApp(QWidget):
             self.btn_align_right.blockSignals(True)
             self.btn_align_right.setChecked(False)
             self.btn_align_right.blockSignals(False)
+
+        try:
+            if hasattr(self, "label_size_combo"):
+                _clr_idx = 3 if getattr(self, "app_mode", "pc") == "tablet" else 2
+                self.label_size_combo.blockSignals(True)
+                self.label_size_combo.setCurrentIndex(_clr_idx)
+                self.label_size_combo.blockSignals(False)
+        except Exception:
+            pass
 
         self.label_w_mm = 70.0
         self.label_h_mm = 70.0
