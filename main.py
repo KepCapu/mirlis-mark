@@ -1912,7 +1912,7 @@ class MirlisMarkApp(QWidget):
         self.logo.setStyleSheet("background: transparent;")
         self.logo.setScaledContents(False)
         self._load_logo()
-        top_layout.addWidget(self.logo, 0, Qt.AlignVCenter)
+        # logo добавляется ниже внутрь left_cell (центрирующая сетка 3:4:3)
 
         title_block = QVBoxLayout()
         title_block.setSpacing(2)
@@ -1937,7 +1937,16 @@ class MirlisMarkApp(QWidget):
         self.subtitle.setStyleSheet("font-size: 16px; color: #64748b; padding-left: 2px; margin-top: 0px; background: transparent;")
         title_block.addWidget(self.subtitle)
 
-        top_layout.addLayout(title_block, 0)
+        # ===== Левая ячейка брови (лого + заголовок), стретч 3 =====
+        left_cell = QWidget()
+        left_cell.setStyleSheet("background: transparent;")
+        left_cell_lay = QHBoxLayout(left_cell)
+        left_cell_lay.setContentsMargins(0, 0, 0, 0)
+        left_cell_lay.setSpacing(14)
+        left_cell_lay.addWidget(self.logo, 0, Qt.AlignVCenter)
+        left_cell_lay.addLayout(title_block, 0)
+        left_cell_lay.addStretch(1)
+        top_layout.addWidget(left_cell, 3)
 
         self.excel_pill = QLabel("Excel: —")
         self.excel_pill.setObjectName("ExcelPill")
@@ -1947,13 +1956,10 @@ class MirlisMarkApp(QWidget):
         self.excel_pill.setMaximumWidth(520)
         self.excel_pill.setMinimumHeight(48)
 
-        top_layout.addStretch(3)
-
         # ===== Группа "Файлы данных" — обособленный фрейм с рамкой и тенью =====
         self.tools_frame = QFrame()
         self.tools_frame.setObjectName("ExcelToolsFrame")
         self.tools_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.tools_frame.setMinimumWidth(900)
         self.tools_frame.setStyleSheet(
             "#ExcelToolsFrame { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 18px; }"
         )
@@ -2033,9 +2039,7 @@ class MirlisMarkApp(QWidget):
         tools_layout.addWidget(self.reload_btn, 0, Qt.AlignVCenter)
         tools_layout.addStretch(1)
 
-        top_layout.addWidget(self.tools_frame, 10)
-
-        top_layout.addStretch(5)
+        top_layout.addWidget(self.tools_frame, 4)
 
         # ===== Кнопка статистики (справа) =====
         self.stats_btn = ActionBtn("Статистика", kind="default")
@@ -2048,7 +2052,15 @@ class MirlisMarkApp(QWidget):
             "#StatsBtn:hover { background: #fde68a; }"
         )
         self.stats_btn.clicked.connect(self._open_statistics)
-        top_layout.addWidget(self.stats_btn, 0, Qt.AlignVCenter)
+        # ===== Правая ячейка брови (стретч 3) — симметрична левой =====
+        right_cell = QWidget()
+        right_cell.setStyleSheet("background: transparent;")
+        right_cell_lay = QHBoxLayout(right_cell)
+        right_cell_lay.setContentsMargins(0, 0, 0, 0)
+        right_cell_lay.setSpacing(14)
+        right_cell_lay.addStretch(1)
+        right_cell_lay.addWidget(self.stats_btn, 0, Qt.AlignVCenter)
+        top_layout.addWidget(right_cell, 3)
 
         # excel_pill больше не показывается в верхней панели, но виджет создан
         # выше — оставляем его невидимым, чтобы существующие вызовы update_excel_status()
@@ -2094,7 +2106,7 @@ class MirlisMarkApp(QWidget):
 
         for b in (self.day_btn, self.week_btn, self.month_btn, self.period_btn, self.back_to_stats_dashboard_btn, self.back_to_print_btn):
             b.setVisible(False)
-            top_layout.addWidget(b, 0, Qt.AlignVCenter)
+            right_cell_lay.addWidget(b, 0, Qt.AlignVCenter)
 
         root.addWidget(top)
 
