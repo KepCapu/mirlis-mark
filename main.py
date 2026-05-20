@@ -503,6 +503,75 @@ class ComboBoxPopupDown(ComboBoxFixedArrow):
             popup.move(bottom_left.x(), bottom_left.y())
 
 
+class _PopupUpKeeper(QObject):
+    """Держит popup комбобокса НАД его полем (раскрытие вверх).
+    Перехватывает Show/Resize/Move контейнера: как только Qt применяет
+    финальную высоту (Resize) или пытается поставить popup вниз (Move/Show),
+    keeper немедленно возвращает его наверх. Это убирает «прыжок вниз→вверх»,
+    т.к. промежуточная нижняя позиция не успевает отрисоваться."""
+
+    def __init__(self, combo, popup):
+        super().__init__(popup)
+        self._combo = combo
+        self._popup = popup
+        self._busy = False
+
+    def _reposition(self):
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            ph = self._popup.height()
+            tl = self._combo.mapToGlobal(self._combo.rect().topLeft())
+            target_x = tl.x()
+            target_y = tl.y() - ph
+            if self._popup.x() != target_x or self._popup.y() != target_y:
+                self._popup.move(target_x, target_y)
+        except Exception:
+            pass
+        finally:
+            self._busy = False
+
+    def eventFilter(self, obj, event):
+        if obj is self._popup and event.type() in (
+            QEvent.Show, QEvent.Resize, QEvent.Move
+        ):
+            self._reposition()
+        return False
+
+
+class ComboBoxPopupUp(ComboBoxFixedArrow):
+    """
+    Комбобокс, у которого выпадающий список всегда раскрывается вверх.
+    Используется для «Цех» — расположен ближе к низу левой колонки.
+    """
+
+    def showPopup(self):
+        # КЛЮЧЕВОЕ: вешаем keeper ДО super().showPopup().
+        # self.view() форсирует создание контейнера popup ещё до показа,
+        # поэтому keeper успевает перехватить самые первые Show/Move события,
+        # которые иначе (при установке после super) проходят мимо на ПЕРВОМ
+        # открытии — отсюда был баг «первый раз вниз, потом вверх».
+        view = self.view()
+        if view and view.window():
+            popup = view.window()
+            keeper = getattr(self, "_popup_up_keeper", None)
+            if keeper is None or keeper._popup is not popup:
+                keeper = _PopupUpKeeper(self, popup)
+                popup.installEventFilter(keeper)
+                self._popup_up_keeper = keeper
+
+        super().showPopup()
+
+        # Повторный перенос после показа — на случай если финальная высота
+        # применилась в самом super (keeper уже её поймает, но дублируем для надёжности).
+        v2 = self.view()
+        if v2 and v2.window():
+            keeper = getattr(self, "_popup_up_keeper", None)
+            if keeper is not None:
+                keeper._reposition()
+
+
 class PlainFontNameDelegate(QStyledItemDelegate):
     """Рендерит пункты как обычный текст (без предпросмотра шрифтом)."""
 
@@ -2224,7 +2293,7 @@ class MirlisMarkApp(QWidget):
         self.lab_chk.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         left_layout.addWidget(self.lab_chk)
 
-        self.checked_combo = ComboBoxPopupDown()
+        self.checked_combo = ComboBoxPopupUp()
         self.checked_combo.addItem("— не выбрано —")
         self.checked_combo.setMaxVisibleItems(8)
         self.checked_combo.view().viewport().setAttribute(Qt.WA_AcceptTouchEvents, True)
@@ -2781,9 +2850,9 @@ class MirlisMarkApp(QWidget):
             if hasattr(self, "product_combo") and combo is self.product_combo:
                 return 8
             if hasattr(self, "made_combo") and combo is self.made_combo:
-                return 3
+                return 4
             if hasattr(self, "checked_combo") and combo is self.checked_combo:
-                return 3
+                return 4
             if hasattr(self, "font_size_combo") and combo is self.font_size_combo:
                 return 6
             if hasattr(self, "font_combo") and combo is self.font_combo:
@@ -2826,23 +2895,27 @@ class MirlisMarkApp(QWidget):
                 frame = 0
 
             total_height = visible_rows * row_h + max(0, visible_rows - 1) * spacing + frame + 12
+
+            # Детерминированная высота строки tablet (QSS min-height: 54px + item padding).
+            # sizeHintForRow ненадёжен на момент расчёта, поэтому фиксируем явно.
+            ROW_H_TABLET = 62   # было 56 — последняя строка с выделением обрезалась
+            VIEW_VPAD = 24      # было 20 — чуть больше воздуха сверху/снизу
+            FRAME_PAD = 4       # рамка контейнера
+
             if combo is self.product_combo:
                 total_height = int(total_height * 0.75)
-            if combo is self.made_combo:
-                total_height = max(1, int(total_height) - 12)
-                # tablet: "изготовил" — сделать popup заметно компактнее (~1.5×)
-                total_height = int(total_height / 1.5)
-            if hasattr(self, "checked_combo") and combo is self.checked_combo:
-                # tablet: "цех" — сделать popup заметно компактнее (~1.5×)
-                total_height = int(total_height / 1.5)
-            if hasattr(self, "font_combo") and combo is self.font_combo:
+            elif hasattr(self, "font_combo") and combo is self.font_combo:
                 total_height = int(total_height * 0.7)
-            if hasattr(self, "label_size_combo") and combo is self.label_size_combo:
-                # tablet: "размер этикетки" — сделать popup чуть компактнее (~-20%)
-                total_height = int(total_height * 0.6776)
-            if hasattr(self, "unit_combo") and combo is self.unit_combo:
-                # tablet: unit_combo — сделать popup чуть короче (~-10%)
+            elif hasattr(self, "unit_combo") and combo is self.unit_combo:
                 total_height = int(total_height * 0.9)
+            elif (
+                combo is self.made_combo
+                or (hasattr(self, "checked_combo") and combo is self.checked_combo)
+                or (hasattr(self, "label_size_combo") and combo is self.label_size_combo)
+            ):
+                # Высота строго по числу видимых строк (= min(count, limit)),
+                # без пустого места и без обрезания. visible_rows уже посчитан выше.
+                total_height = visible_rows * ROW_H_TABLET + VIEW_VPAD + FRAME_PAD
             view.setFixedHeight(max(60, int(total_height)))
 
             # product_combo / font_combo: ограничить и внешний popup (иначе остаётся «лишняя» высота)
