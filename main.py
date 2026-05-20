@@ -200,6 +200,30 @@ def get_config_path() -> str:
     return os.path.join(app_data_dir(), "settings.json")
 
 
+def get_last_mode_path() -> str:
+    """Путь к файлу с последним выбранным режимом (pc/tablet)."""
+    return os.path.join(app_data_dir(), "last_mode.txt")
+
+
+def read_last_mode() -> str:
+    """Читает последний выбранный режим из файла. Возвращает 'pc'/'tablet'/''."""
+    try:
+        with open(get_last_mode_path(), "r", encoding="utf-8") as f:
+            m = f.read().strip().lower()
+        return m if m in ("pc", "tablet") else ""
+    except Exception:
+        return ""
+
+
+def write_last_mode(mode: str) -> None:
+    """Сохраняет выбранный режим в файл (для масштабирования при следующем запуске)."""
+    try:
+        with open(get_last_mode_path(), "w", encoding="utf-8") as f:
+            f.write((mode or "").strip().lower())
+    except Exception:
+        pass
+
+
 def ensure_products_file() -> str:
     """
     Путь к products.xlsx для работы приложения.
@@ -1386,6 +1410,7 @@ class ModeSelectDialog(QDialog):
 
     def _select(self, mode: str):
         self.selected_mode = mode
+        write_last_mode(mode)  # запоминаем для масштаба при следующем запуске
         self.accept()
 
 
@@ -1856,39 +1881,9 @@ class MirlisMarkApp(QWidget):
             }
             """
         _qss = _qss.replace("url(assets/combo-btn.svg)", f"url({combo_btn_path})")
-        # PC-only: popup списков — прямоугольный, скроллбар внутри с небольшим правым отступом.
-        if getattr(self, "app_mode", "pc") != "tablet":
-            _qss += """
-            QComboBoxPrivateContainer,
-            QFontComboBoxPrivateContainer {
-                background: #ffffff;
-                border: 1px solid #d0d7e2;
-                border-radius: 0px;
-            }
-            QComboBoxPrivateContainer > QFrame,
-            QFontComboBoxPrivateContainer > QFrame {
-                background: transparent;
-                border: none;
-                margin: 0px;
-                padding: 0px;
-            }
-            QComboBox QAbstractItemView,
-            QFontComboBox QAbstractItemView {
-                background: #ffffff;
-                border: 1px solid #d0d7e2;
-                border-radius: 0px;
-                padding: 0px 14px 0px 0px;
-            }
-            QComboBox QAbstractItemView QScrollBar:vertical,
-            QFontComboBox QAbstractItemView QScrollBar:vertical {
-                width: 12px;
-                margin: 2px 2px 2px 0px;
-            }
-            QComboBox QAbstractItemView QScrollBar::handle:vertical,
-            QFontComboBox QAbstractItemView QScrollBar::handle:vertical {
-                margin: 1px;
-            }
-            """
+        # PC-only QSS popup'ов убран: теперь PC использует планшетный визуал
+        # списков (через _apply_tablet_combobox_popups), и прямоугольный
+        # PC-стиль с ним конфликтовал.
         self.setStyleSheet(_qss)
 
     # ---------------- Auto Excel refresh ----------------
@@ -2753,9 +2748,11 @@ class MirlisMarkApp(QWidget):
         for cb in (self.product_combo, self.unit_combo, self.made_combo, self.checked_combo, self.font_combo, self.label_size_combo):
             cb.setObjectName("ComboWithArrow")
 
-        if getattr(self, "app_mode", "pc") == "tablet":
-            self._apply_tablet_combobox_popups()
-            self._apply_tablet_ui_tweaks()
+        # И планшет, и ПК используют один визуальный движок (планшетные
+        # размеры/плотность). Раньше эти твики применялись только для tablet,
+        # из-за чего PC на больших мониторах выглядел мелко/разреженно.
+        self._apply_tablet_combobox_popups()
+        self._apply_tablet_ui_tweaks()
 
         self._resize_label_preview()
         eff0 = self._effective_preview_font_scale()
