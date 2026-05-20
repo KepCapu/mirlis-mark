@@ -315,7 +315,7 @@ class _MiniBarChart(QWidget):
             # Reserve explicit zones:
             # - top for value labels above bars
             # - bottom for X labels
-            top_value_h = fm_val.height() + 6
+            top_value_h = fm_val.height() + 12
 
             def _format_x_label(raw: str) -> str:
                 """
@@ -361,7 +361,7 @@ class _MiniBarChart(QWidget):
                 axis_w = max(int(fm_tick.horizontalAdvance(str(t))) for t in y_ticks) + 10
                 axis_w = max(axis_w, 36)
 
-            plot_bars = plot_frame.adjusted(axis_w, 0, -axis_w, 0)
+            plot_bars = plot_frame.adjusted(axis_w, 0, -8, 0)
 
             # --- Adaptive bar density for report preview/print ---
             # Some sections pass layout_bar_count (e.g. 30) to keep stable sizing across chunks.
@@ -407,11 +407,6 @@ class _MiniBarChart(QWidget):
                     p.drawText(
                         QRect(plot_frame.left(), yy - th // 2, axis_w - 4, th),
                         Qt.AlignRight | Qt.AlignVCenter,
-                        txt,
-                    )
-                    p.drawText(
-                        QRect(plot_frame.right() - axis_w + 4, yy - th // 2, axis_w - 4, th),
-                        Qt.AlignLeft | Qt.AlignVCenter,
                         txt,
                     )
                 p.setPen(Qt.NoPen)
@@ -490,7 +485,9 @@ class _MiniBarChart(QWidget):
                     p.setPen(QColor(_C_TEXT))
                     p.setFont(value_font)
                     y_txt = max(inner.top(), y - fm_val.height() - 4)
-                    p.drawText(QRect(x, int(y_txt), bw, fm_val.height() + 2), Qt.AlignCenter, str(v))
+                    _vw = max(int(bw), int(cell_w))
+                    _vx = int(x + (bw - _vw) / 2)
+                    p.drawText(QRect(_vx, int(y_txt), _vw, fm_val.height() + 2), Qt.AlignCenter, str(v))
                     p.setFont(_font_bar(8, 600))
                 p.setPen(Qt.NoPen)
         else:
@@ -1002,7 +999,7 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
     # Slightly upscale for preview readability.
     base_w, base_h = (1123, 794) if landscape else (794, 1123)
     page_w, page_h = int(base_w * 1.12), int(base_h * 1.12)
-    margin = 30  # inner page padding (gives charts more width in preview)
+    margin = 20  # inner page padding (gives charts more width in preview)
     section_gap = 12
     content_w = page_w - margin * 2
     content_h = page_h - margin * 2
