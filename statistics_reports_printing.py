@@ -235,6 +235,7 @@ class _MiniBarChart(QWidget):
         value_scale_max: int | None = None,
         layout_bar_count: int | None = None,
         show_y_axis_guides: bool = False,
+        month_labels_allowed: set | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -249,6 +250,7 @@ class _MiniBarChart(QWidget):
         self._value_scale_max = None if value_scale_max is None else max(1, int(value_scale_max))
         self._layout_bar_count = None if layout_bar_count is None else max(1, int(layout_bar_count))
         self._show_y_axis_guides = bool(show_y_axis_guides)
+        self._month_labels_allowed = month_labels_allowed
         # Keep a reasonable floor but allow content-driven height via sizeHint().
         self.setMinimumHeight(180 if not horizontal else 120)
         self.setSizePolicy(self.sizePolicy().Expanding, self.sizePolicy().Fixed)
@@ -272,7 +274,7 @@ class _MiniBarChart(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         p.fillRect(self.rect(), Qt.white)
 
-        pad = 8
+        pad = 6
         r = self.rect().adjusted(pad, pad, -pad, -pad)
 
         top_extra = 0
@@ -300,7 +302,7 @@ class _MiniBarChart(QWidget):
         y_scale = max(1, int(self._value_scale_max)) if self._value_scale_max is not None else max(1, data_max)
         y_scale = max(y_scale, data_max, 1)
 
-        inner = chart.adjusted(4, 6, -4, -6)
+        inner = chart.adjusted(3, 6, -3, -6)
         p.setPen(Qt.NoPen)
         bar_color_default = QColor(self._bar_color)
 
@@ -320,10 +322,12 @@ class _MiniBarChart(QWidget):
             def _format_x_label(raw: str) -> str:
                 """
                 Report X-axis labels:
-                - keep full 'dd.mm' (with leading zeros) for day buckets
-                - keep other label kinds intact (hours '00', week ranges 'dd.mm–dd.mm', etc.)
+                - day buckets 'dd.mm' -> day number 'dd' (месяц рисуется строкой ниже)
+                - keep other label kinds intact (hours '00', week ranges, etc.)
                 """
                 s = (raw or "").strip()
+                if len(s) == 5 and s[2] == "." and s[:2].isdigit() and s[3:].isdigit():
+                    return s[:2]
                 return s
 
             def _is_day_label(raw: str) -> bool:
@@ -348,7 +352,11 @@ class _MiniBarChart(QWidget):
                 x_font = _font_bar(7, 650)
             x_fm = QFontMetrics(x_font)
             x_label_h = max(18, int(x_fm.height()) + 8)
-            plot_frame = inner.adjusted(0, top_value_h, 0, -(x_label_h + 6))
+            # Для «по дням»: под числами дней — строка месяцев («апрель», «май» …)
+            month_font = _font_bar(7, 700) if is_by_days else x_font
+            month_fm = QFontMetrics(month_font)
+            month_band_h = (int(month_fm.height()) + 6) if is_by_days else 0
+            plot_frame = inner.adjusted(0, top_value_h, 0, -(x_label_h + 6 + month_band_h))
 
             axis_w = 0
             tick_font = _font_bar(7, 600)
@@ -359,7 +367,7 @@ class _MiniBarChart(QWidget):
                 y_ticks[-1] = y_scale
                 y_ticks = sorted(set(y_ticks))
                 axis_w = max(int(fm_tick.horizontalAdvance(str(t))) for t in y_ticks) + 10
-                axis_w = max(axis_w, 36)
+                axis_w = max(axis_w, 28)
 
             plot_bars = plot_frame.adjusted(axis_w, 0, -8, 0)
 
@@ -435,6 +443,7 @@ class _MiniBarChart(QWidget):
                     show_every = max(show_every, 2)
                 if n > 28:
                     show_every = max(show_every, 3)
+            _cell_bounds = []
             for i in range(n):
                 v = vals[i]
                 bh = int((float(v) / float(y_scale)) * float(plot_h))
@@ -478,6 +487,7 @@ class _MiniBarChart(QWidget):
                     cell_left = plot_bars.left()
                 if i == n - 1:
                     cell_right = plot_bars.right()
+                _cell_bounds.append((int(cell_left), int(cell_right)))
                 p.drawText(QRect(int(cell_left), baseline_y + 2, int(cell_right - cell_left), x_label_h), Qt.AlignCenter, lab)
                 p.setFont(_font_bar(8, 600))
                 # value label (above bar, inside reserved top zone)
@@ -490,6 +500,44 @@ class _MiniBarChart(QWidget):
                     p.drawText(QRect(_vx, int(y_txt), _vw, fm_val.height() + 2), Qt.AlignCenter, str(v))
                     p.setFont(_font_bar(8, 600))
                 p.setPen(Qt.NoPen)
+
+            # Строка месяцев под числами дней (только для «по дням»)
+            if is_by_days and month_band_h > 0 and _cell_bounds:
+                _MONTHS_RU = {
+                    "01": "январь", "02": "февраль", "03": "март", "04": "апрель",
+                    "05": "май", "06": "июнь", "07": "июль", "08": "август",
+                    "09": "сентябрь", "10": "октябрь", "11": "ноябрь", "12": "декабрь",
+                }
+                def _mon_of(idx):
+                    s = str(labs[idx]).strip()
+                    return s[3:5] if (len(s) == 5 and s[2] == ".") else ""
+                month_y = baseline_y + 2 + x_label_h
+                p.setFont(month_font)
+                p.setPen(QColor(_C_SUB))
+                run_start = 0
+                cur = _mon_of(0)
+                for i in range(1, n + 1):
+                    m = _mon_of(i) if i < n else "__end__"
+                    if m != cur:
+                        name = _MONTHS_RU.get(cur, "")
+                        allowed = (self._month_labels_allowed is None) or (cur in self._month_labels_allowed)
+                        if name and allowed and run_start < len(_cell_bounds) and (i - 1) < len(_cell_bounds):
+                            left = _cell_bounds[run_start][0]
+                            right = _cell_bounds[i - 1][1]
+                            # Месяц целиком, по центру своего диапазона, без обрезки —
+                            # при нехватке места допускаем лёгкий заход на соседние числа.
+                            cx = (int(left) + int(right)) / 2.0
+                            tw = int(month_fm.horizontalAdvance(name))
+                            draw_w = max(int(right - left), tw + 6)
+                            draw_x = int(cx - draw_w / 2.0)
+                            p.drawText(
+                                QRect(draw_x, int(month_y), int(draw_w), int(month_band_h)),
+                                Qt.AlignCenter,
+                                name,
+                            )
+                        run_start = i
+                        cur = m
+                p.setPen(Qt.NoPen)
         else:
             # For print/preview readability we keep a stable row height.
             vmax = max(1, max(vals))
@@ -500,6 +548,8 @@ class _MiniBarChart(QWidget):
                 right_pad = 72
                 bar_max_w = max(10, inner.width() - label_w - right_pad)
                 w = int((v / vmax) * bar_max_w)
+                if v > 0:
+                    w = max(w, 8)  # минимальная видимая длина столбца при малом значении
                 y = inner.top() + i * row_h
                 p.setPen(QColor(_C_SUB))
                 lab = fm.elidedText(str(labs[i]), Qt.ElideRight, label_w - 6)
@@ -1267,6 +1317,29 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
         chunk_pts = _PRINT_TIME_SERIES_MAX_POINTS_PER_CHUNK
         y_scale_max = _print_time_chart_y_scale_max(list(buckets))
 
+        def _chunk_month(idx: int) -> str:
+            s = str(labels[idx]).strip()
+            return s[3:5] if (len(s) == 5 and s[2] == ".") else ""
+
+        def _months_owned(off: int, ln: int) -> set:
+            # Месяц подписывает тот чанк, где у него больше дней (на стыке страниц — больший «кусок»).
+            end = min(off + ln, len(labels))
+            owned, seen = set(), set()
+            for i in range(off, end):
+                m = _chunk_month(i)
+                if not m or m in seen:
+                    continue
+                seen.add(m)
+                total_m = sum(1 for k in range(len(labels)) if _chunk_month(k) == m)
+                in_chunk = sum(1 for k in range(off, end) if _chunk_month(k) == m)
+                if in_chunk * 2 > total_m:
+                    owned.add(m)
+                elif in_chunk * 2 == total_m:
+                    first_idx = next((k for k in range(len(labels)) if _chunk_month(k) == m), off)
+                    if off <= first_idx < end:
+                        owned.add(m)
+            return owned
+
         def _make_time_chunk_chart(off: int, ln: int) -> _MiniBarChart:
             ch0 = _MiniBarChart(
                 "",
@@ -1279,6 +1352,7 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
                 value_scale_max=y_scale_max,
                 layout_bar_count=chunk_pts,
                 show_y_axis_guides=True,
+                month_labels_allowed=_months_owned(off, ln),
             )
             ch0.setMinimumHeight(320 if (options.period_label or "").strip() != "День" else 280)
             ch0.setFixedWidth(content_w - 4)
@@ -1384,7 +1458,6 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
             g.setContentsMargins(0, 0, 0, 0)
             g.setHorizontalSpacing(18)
             g.setVerticalSpacing(6)
-            legend_font_px = _bar_pt(8)
             total_all = max(1, sum(vals_all))
             chunk_labs = labs_all[offset:offset + limit]
             chunk_vals = vals_all[offset:offset + limit]
@@ -1393,23 +1466,17 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
             def add_item(rr: int, cc: int, abs_i: int, name: str, val: int) -> None:
                 color = _SERIES_PALETTE_HEX[abs_i % len(_SERIES_PALETTE_HEX)]
                 dot = QLabel("●")
-                dot.setStyleSheet(
-                    f"font-family: {_STATS_FONT_FAMILY}; font-size: {legend_font_px}px; font-weight: 700;"
-                    f"color: {color}; background: transparent; border: none;"
-                )
+                dot.setFont(_font_bar(8, 700))
+                dot.setStyleSheet(f"color: {color}; background: transparent; border: none;")
                 name_lb = QLabel(str(name))
-                name_lb.setStyleSheet(
-                    f"font-family: {_STATS_FONT_FAMILY}; font-size: {legend_font_px}px; font-weight: 600;"
-                    f"color: {_C_SUB}; background: transparent; border: none;"
-                )
+                name_lb.setFont(_font_bar(8, 600))
+                name_lb.setStyleSheet(f"color: {_C_SUB}; background: transparent; border: none;")
                 name_lb.setWordWrap(False)
                 name_lb.setMinimumWidth(10)
                 pp = (float(val) / float(total_all)) * 100.0
                 val_lb = QLabel(f"{int(val)} ({pp:.1f}%)")
-                val_lb.setStyleSheet(
-                    f"font-family: {_STATS_FONT_FAMILY}; font-size: {legend_font_px}px; font-weight: 600;"
-                    f"color: {_C_TEXT}; background: transparent; border: none;"
-                )
+                val_lb.setFont(_font_bar(8, 600))
+                val_lb.setStyleSheet(f"color: {_C_TEXT}; background: transparent; border: none;")
                 g.addWidget(dot, rr, cc, 1, 1, Qt.AlignLeft | Qt.AlignVCenter)
                 g.addWidget(name_lb, rr, cc + 1, 1, 1, Qt.AlignLeft | Qt.AlignVCenter)
                 g.addWidget(val_lb, rr, cc + 2, 1, 1, Qt.AlignRight | Qt.AlignVCenter)
@@ -1498,7 +1565,7 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
                 vals_all,
                 colors=bar_colors_full,
                 legend_offset=0,
-                legend_max_items=pie_first_legend_items,
+                legend_max_items=0,  # круг без встроенной легенды — легенда единым блоком ниже
             )
             pie.setFixedWidth(content_w - 4)
             fr_pie_lay.addWidget(pie, 0)
@@ -1506,13 +1573,14 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
             fr_pie.setProperty("FlowKey", str(section_key))
             sections.append(fr_pie)
 
-            # Legend/list continuation blocks (text-only) after the pie.
-            consumed = min(total_items, pie_first_legend_items)
-            while consumed < total_items:
-                fr_next, fr_next_lay = section_frame(f"{title} (продолжение)")
-                fr_next_lay.addWidget(top_legend_table_chunk(consumed, list_chunk_items), 0)
-                sections.append(fr_next)
-                consumed += list_chunk_items
+            # Единая легенда на ВСЕ позиции в два столбца: левый — первая (бо́льшая по доле)
+            # половина по убыванию, правый — вторая. Без деления на несколько блоков.
+            if total_items > 0:
+                fr_leg, fr_leg_lay = section_frame(f"{title} (продолжение)")
+                fr_leg.setProperty("FlowKind", "top_legend")
+                fr_leg.setProperty("FlowKey", str(section_key))
+                fr_leg_lay.addWidget(top_legend_table_chunk(0, total_items), 0)
+                sections.append(fr_leg)
 
         elif is_tables():
             # Tables-only mode: split long lists into continuation blocks.
@@ -1644,6 +1712,15 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
             ts_tl.setVisible(used <= 0)
             ts_dv.setVisible(used <= 0)
 
+        # Продолжение легенды «Топ …»: прячем повторный заголовок, если блок лёг
+        # на ту же страницу сразу после круга/легенды того же раздела.
+        if kind == "top_legend" and ts_tl is not None and ts_dv is not None:
+            prev_kind = str(page.property("LastFlowKind") or "")
+            prev_key = str(page.property("LastFlowKey") or "")
+            same_flow = (used > 0) and (prev_key == key) and (prev_kind in ("top_pie", "top_legend"))
+            ts_tl.setVisible(not same_flow)
+            ts_dv.setVisible(not same_flow)
+
         h = section_h(s)
         need = h + (section_gap if used > 0 else 0)
         body_h = int(_measured_body_h or (content_h - 64))
@@ -1666,6 +1743,11 @@ def build_report_pages(options: PrintReportOptions, records: list[PrintRecord]) 
             page, lay = mk_page()
             used = 0
             if kind == "time_series_table" and part > 0 and ts_tl is not None and ts_dv is not None:
+                ts_tl.setVisible(True)
+                ts_dv.setVisible(True)
+                h = section_h(s)
+                need = h + (section_gap if used > 0 else 0)
+            if kind == "top_legend" and ts_tl is not None and ts_dv is not None:
                 ts_tl.setVisible(True)
                 ts_dv.setVisible(True)
                 h = section_h(s)
