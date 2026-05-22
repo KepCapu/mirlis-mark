@@ -636,6 +636,7 @@ def _vbar_draw_hour_chart_value_label(painter: QPainter, rect: QRect, text: str,
 
 class _VBarChart(QWidget):
     hoverLabelChanged = pyqtSignal(str)
+    timePageStep = pyqtSignal(int)  # +1 следующий месяц, -1 предыдущий (свайп)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -655,6 +656,10 @@ class _VBarChart(QWidget):
         self._last_slot: float = 0.0
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
+        self._swipe_enabled = False
+        self._swipe_active = False
+        self._swipe_x0 = 0.0
+        self._swipe_y0 = 0.0
 
     def set_detail_mode(self, enabled: bool) -> None:
         """Detail mode: enable hover sync with the right table."""
@@ -717,7 +722,9 @@ class _VBarChart(QWidget):
 
         left_pad = 40
         bottom_pad = 44
-        top_pad = 22
+        # Запас сверху под подпись значения: чтобы у самого высокого столбца зазор
+        # «значение↔столбец» был такой же, как у низких (иначе подпись прижимается к потолку).
+        top_pad = 38
         right_pad = 6
 
         n = len(self._values)
@@ -1046,6 +1053,26 @@ class _VBarChart(QWidget):
             self._set_hover_index(-1)
         return super().leaveEvent(event)
 
+    def set_swipe_paging(self, enabled: bool) -> None:
+        """Свайп влево/вправо листает страницы-месяцы (режим «Период»)."""
+        self._swipe_enabled = bool(enabled)
+
+    def mousePressEvent(self, event):  # type: ignore[override]
+        if getattr(self, "_swipe_enabled", False) and event.button() == Qt.LeftButton:
+            self._swipe_x0 = float(event.pos().x())
+            self._swipe_y0 = float(event.pos().y())
+            self._swipe_active = True
+        return super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):  # type: ignore[override]
+        if getattr(self, "_swipe_active", False):
+            self._swipe_active = False
+            dx = float(event.pos().x()) - getattr(self, "_swipe_x0", 0.0)
+            dy = float(event.pos().y()) - getattr(self, "_swipe_y0", 0.0)
+            if abs(dx) >= 45 and abs(dx) > abs(dy) * 1.2:
+                self.timePageStep.emit(1 if dx < 0 else -1)
+        return super().mouseReleaseEvent(event)
+
 
 class _HBarChart(QWidget):
     hoverLabelChanged = pyqtSignal(str)
@@ -1185,7 +1212,9 @@ class _HBarChart(QWidget):
             bar_area_w = track_w
         else:
             left_pad = 140
-            right_pad = 26
+            # Резерв справа под самое широкое значение, иначе длинные числа упираются в край
+            # (и заодно столбцы становятся чуть короче).
+            right_pad = max(40, int(fm_v.horizontalAdvance(str(int(max_v)))) + 14)
         top_pad = 0 if getattr(self, "_detail_mode", False) else 8
         bottom_pad = 0 if getattr(self, "_detail_mode", False) else 8
         if is_detail:
@@ -1767,6 +1796,8 @@ class StatisticsPage(QWidget):
         self._period = "day"
         self._custom_start_dt: datetime | None = None
         self._custom_end_dt: datetime | None = None
+        self._time_month_idx = 0      # текущая страница-месяц в режиме «Период»
+        self._time_month_sig = None   # подпись (start,end) — для сброса страницы при смене периода
         self._all_records: list[PrintRecord] = []
         self._archive_root: str | None = None
         self._dashboard_records: list[PrintRecord] = []
@@ -2681,6 +2712,57 @@ class StatisticsPage(QWidget):
         self.time_chart.set_show_all_x_labels(True)
         self.time_chart.set_hour_zones_background(True)
         self.time_card.body_lay.addWidget(self.time_chart, 1)
+        # Стрелки перелистывания по месяцам (видны только в «Периоде» с длинным диапазоном)
+        self._time_nav = QWidget()
+        self._time_nav.setStyleSheet("background: transparent; border: none;")
+        _tn_lay = QHBoxLayout(self._time_nav)
+        _tn_lay.setContentsMargins(0, 0, 0, 0)
+        _tn_lay.setSpacing(6)
+
+        def _chevron_icon(direction: str) -> QIcon:
+            pm = QPixmap(20, 20)
+            pm.fill(Qt.transparent)
+            pn = QPainter(pm)
+            pn.setRenderHint(QPainter.Antialiasing, True)
+            _pen = QPen(QColor(_C_TITLE))
+            _pen.setWidthF(2.2)
+            _pen.setCapStyle(Qt.RoundCap)
+            _pen.setJoinStyle(Qt.RoundJoin)
+            pn.setPen(_pen)
+            if direction == "left":
+                pn.drawLine(12, 5, 7, 10)
+                pn.drawLine(7, 10, 12, 15)
+            else:
+                pn.drawLine(8, 5, 13, 10)
+                pn.drawLine(13, 10, 8, 15)
+            pn.end()
+            return QIcon(pm)
+
+        def _mk_time_nav_btn(direction: str) -> QPushButton:
+            b = QPushButton("")
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedSize(30, 28)
+            b.setIcon(_chevron_icon(direction))
+            b.setIconSize(QSize(20, 20))
+            b.setStyleSheet(
+                "QPushButton {"
+                "background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;"
+                "}"
+                "QPushButton:hover { background: #f8fafc; }"
+                "QPushButton:pressed { background: #eef2f7; }"
+                "QPushButton:disabled { border-color: #eef2f7; }"
+            )
+            return b
+
+        self.time_prev_btn = _mk_time_nav_btn("left")
+        self.time_next_btn = _mk_time_nav_btn("right")
+        self.time_prev_btn.clicked.connect(self._time_page_prev)
+        self.time_next_btn.clicked.connect(self._time_page_next)
+        self.time_chart.timePageStep.connect(self._time_page_step)
+        _tn_lay.addWidget(self.time_prev_btn, 0)
+        _tn_lay.addWidget(self.time_next_btn, 0)
+        self._time_nav.setVisible(False)
+        self.time_card._header_right_lay.addWidget(self._time_nav, 0, Qt.AlignRight | Qt.AlignVCenter)
         grid.addWidget(self.time_card, 2, 0, 1, 12)
 
         # Bottom row (3 cards, each spans 2 columns)
@@ -2831,8 +2913,25 @@ class StatisticsPage(QWidget):
         return w
 
     # ----- Data & refresh -----
+    def _time_page_prev(self) -> None:
+        if getattr(self, "_time_month_idx", 0) > 0:
+            self._time_month_idx -= 1
+            self.refresh_dashboard()
+
+    def _time_page_next(self) -> None:
+        self._time_month_idx = getattr(self, "_time_month_idx", 0) + 1
+        self.refresh_dashboard()
+
+    def _time_page_step(self, d: int) -> None:
+        self._time_month_idx = max(0, getattr(self, "_time_month_idx", 0) + int(d))
+        self.refresh_dashboard()
+
     def refresh_dashboard(self):
         now = datetime.now()
+        if hasattr(self, "_time_nav"):
+            self._time_nav.setVisible(False)
+        if hasattr(self, "time_chart"):
+            self.time_chart.set_swipe_paging(False)
         if self._period == "custom":
             if not self._custom_start_dt or not self._custom_end_dt:
                 records = []
@@ -3006,35 +3105,47 @@ class StatisticsPage(QWidget):
                             buckets[idx[rd]] += int(r.copies)
                     labs = [dd.strftime("%d.%m") for dd in days]
                 else:
-                    self.time_card.title_lbl.setText("Этикеток по неделям")
-                    weeks: list[tuple[datetime, datetime]] = []
-                    d0 = start_dt.date()
-                    d1 = end_dt.date()
-                    cur_d = d0
-                    safety = 0
-                    while cur_d <= d1 and safety < 800:
-                        safety += 1
-                        # ISO week: Monday..Sunday
-                        monday = cur_d - timedelta(days=cur_d.weekday())
-                        sunday = monday + timedelta(days=6)
-                        week_end = min(sunday, d1)
-                        weeks.append(
-                            (
-                                datetime.combine(monday, datetime.min.time()),
-                                datetime.combine(week_end, datetime.max.time().replace(microsecond=0)),
-                            )
-                        )
-                        cur_d = week_end + timedelta(days=1)
-
-                    buckets = [0] * len(weeks)
+                    # Длинный период — помесячная перелистываемая гистограмма (дни месяца).
+                    import calendar as _cal
+                    sd = start_dt.date()
+                    ed = end_dt.date()
+                    pages: list[tuple[int, int]] = []
+                    _yy, _mm = sd.year, sd.month
+                    while (_yy, _mm) <= (ed.year, ed.month):
+                        pages.append((_yy, _mm))
+                        _mm += 1
+                        if _mm > 12:
+                            _mm = 1
+                            _yy += 1
+                    _sig = (sd, ed)
+                    if self._time_month_sig != _sig:
+                        self._time_month_sig = _sig
+                        self._time_month_idx = 0
+                    if pages:
+                        self._time_month_idx = max(0, min(self._time_month_idx, len(pages) - 1))
+                    cur_y, cur_m = pages[self._time_month_idx] if pages else (sd.year, sd.month)
+                    first_d = max(sd, datetime(cur_y, cur_m, 1).date())
+                    _last_day = _cal.monthrange(cur_y, cur_m)[1]
+                    last_d = min(ed, datetime(cur_y, cur_m, _last_day).date())
+                    days = []
+                    d = first_d
+                    while d <= last_d:
+                        days.append(d)
+                        d += timedelta(days=1)
+                    idx_map = {dd: i for i, dd in enumerate(days)}
+                    buckets = [0] * len(days)
                     for r in records:
-                        for i, (ws, we) in enumerate(weeks):
-                            if ws <= r.dt <= we:
-                                buckets[i] += int(r.copies)
-                                break
-                    labs = []
-                    for ws, we in weeks:
-                        labs.append(f"{ws.strftime('%d.%m')}–{we.strftime('%d.%m')}")
+                        rd = r.dt.date()
+                        if rd in idx_map:
+                            buckets[idx_map[rd]] += int(r.copies)
+                    labs = [dd.strftime("%d.%m") for dd in days]
+                    self.time_card.title_lbl.setText(
+                        f"Этикеток за выбранный период: {sd.strftime('%d.%m.%Y')}–{ed.strftime('%d.%m.%Y')}"
+                    )
+                    self._time_nav.setVisible(len(pages) > 1)
+                    self.time_prev_btn.setEnabled(self._time_month_idx > 0)
+                    self.time_next_btn.setEnabled(self._time_month_idx < len(pages) - 1)
+                    self.time_chart.set_swipe_paging(len(pages) > 1)
 
                 self.time_chart.set_hour_zones_background(False)
         elif self._period == "day":

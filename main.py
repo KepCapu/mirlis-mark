@@ -2584,7 +2584,7 @@ class MirlisMarkApp(QWidget):
         self.copies_caption.setVisible(False)  # убран из UI, скрыт
         self.copies_minus = ActionBtn("−", kind="default")
         self.copies_minus.setFixedWidth(106)
-        self.copies_input = QLineEdit("")
+        self.copies_input = QLineEdit("1")
         self.copies_input.setMinimumWidth(80)
         self.copies_input.setMaximumWidth(160)   # не расползается — освобождает место под Печать
         self.copies_input.setAlignment(Qt.AlignCenter)
@@ -5185,7 +5185,7 @@ class MirlisMarkApp(QWidget):
         self.unit_combo.setCurrentIndex(0)
         self.qty_input.clear()
         if hasattr(self, "copies_input"):
-            self.copies_input.clear()
+            self.copies_input.setText("1")
 
         self.made_manual.setChecked(False)
         self.checked_manual.setChecked(False)
