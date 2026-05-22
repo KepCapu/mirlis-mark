@@ -2488,6 +2488,11 @@ class MirlisMarkApp(QWidget):
 
         lw0, lh0 = self._logical_preview_size()
         self.preview.setFixedSize(lw0, lh0)
+        # Перенос строк превью фиксируем под тот же виртуальный канвас (lw0=450),
+        # что и печать (doc.setTextWidth(450)). Иначе превью переносит раньше из-за
+        # рамки/паддинга вьюпорта, и текст не совпадает с напечатанным.
+        self.preview.setLineWrapMode(QTextEdit.FixedPixelWidth)
+        self.preview.setLineWrapColumnOrWidth(lw0)
 
         self.preview.setStyleSheet(
             """
@@ -3672,6 +3677,7 @@ class MirlisMarkApp(QWidget):
 
         lw, lh = self._logical_preview_size()
         self.preview.setFixedSize(lw, lh)
+        self.preview.setLineWrapColumnOrWidth(lw)
 
         if hasattr(self, "_preview_scene"):
             self._preview_scene.setSceneRect(0.0, 0.0, float(lw), float(lh))
