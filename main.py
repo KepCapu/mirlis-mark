@@ -67,7 +67,7 @@ from PyQt5.QtWidgets import (
     QGraphicsProxyWidget,
     QGraphicsDropShadowEffect,
 )
-from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRectF, QEasingCurve
+from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRect, QRectF, QEasingCurve
 from PyQt5.QtCore import QObject
 from PyQt5.QtCore import QStringListModel
 from PyQt5.QtGui import (
@@ -87,6 +87,7 @@ from PyQt5.QtGui import (
     QBrush,
     QPen,
     QRegion,
+    QCursor,
 )
 
 # PyQt5: мультимедиа
@@ -1415,6 +1416,90 @@ class ModeSelectDialog(QDialog):
 
 
 # -------------------- MAIN APP --------------------
+def _make_move_cursor(size: int = 48) -> QCursor:
+    """Крупный курсор «перемещение»: крест с четырьмя стрелками, с белым ореолом."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    c = size / 2.0
+    arm = size * 0.40
+    ah = size * 0.13
+
+    def _strokes(pen):
+        p.setPen(pen)
+        p.drawLine(int(c), int(c - arm), int(c), int(c + arm))
+        p.drawLine(int(c - arm), int(c), int(c + arm), int(c))
+        p.drawLine(int(c), int(c - arm), int(c - ah), int(c - arm + ah))
+        p.drawLine(int(c), int(c - arm), int(c + ah), int(c - arm + ah))
+        p.drawLine(int(c), int(c + arm), int(c - ah), int(c + arm - ah))
+        p.drawLine(int(c), int(c + arm), int(c + ah), int(c + arm - ah))
+        p.drawLine(int(c - arm), int(c), int(c - arm + ah), int(c - ah))
+        p.drawLine(int(c - arm), int(c), int(c - arm + ah), int(c + ah))
+        p.drawLine(int(c + arm), int(c), int(c + arm - ah), int(c - ah))
+        p.drawLine(int(c + arm), int(c), int(c + arm - ah), int(c + ah))
+
+    halo = QPen(QColor(255, 255, 255, 235))
+    halo.setWidthF(max(3.0, size * 0.11))
+    halo.setCapStyle(Qt.RoundCap)
+    halo.setJoinStyle(Qt.RoundJoin)
+    _strokes(halo)
+    core = QPen(QColor("#1E2F45"))
+    core.setWidthF(max(1.6, size * 0.055))
+    core.setCapStyle(Qt.RoundCap)
+    core.setJoinStyle(Qt.RoundJoin)
+    _strokes(core)
+    p.end()
+    return QCursor(pm, int(c), int(c))
+
+
+class _NudgeableView(QGraphicsView):
+    """Вью превью: в режиме «карандаш» ЛКМ-перетаскивание двигает текст этикетки."""
+    nudged = pyqtSignal(float, float)  # дельта в координатах сцены (логические px)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._nudge_on = False
+        self._drag_pt = None
+
+    def set_nudge_enabled(self, on: bool) -> None:
+        self._nudge_on = bool(on)
+        self.setCursor(_make_move_cursor(48) if self._nudge_on else Qt.ArrowCursor)
+        if not self._nudge_on:
+            self._drag_pt = None
+
+    def mousePressEvent(self, e):
+        if self._nudge_on and e.button() == Qt.LeftButton:
+            self._drag_pt = self.mapToScene(e.pos())
+            self.setCursor(_make_move_cursor(48))
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._nudge_on and self._drag_pt is not None:
+            cur = self.mapToScene(e.pos())
+            self.nudged.emit(cur.x() - self._drag_pt.x(), cur.y() - self._drag_pt.y())
+            self._drag_pt = cur
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._nudge_on and self._drag_pt is not None:
+            self._drag_pt = None
+            self.setCursor(_make_move_cursor(48))
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        cb = getattr(self, "_overflow_painter", None)
+        if cb is not None:
+            cb(painter)
+
+
 class MirlisMarkApp(QWidget):
     def __init__(self, app_mode="pc"):
         super().__init__()
@@ -2389,7 +2474,29 @@ class MirlisMarkApp(QWidget):
         right_layout.setSpacing(14)
 
         self.preview_header = PreviewHeaderLabel("Предпросмотр")
-        right_layout.addWidget(self.preview_header, 0, Qt.AlignHCenter)
+        _ph_row = QHBoxLayout()
+        _ph_row.setContentsMargins(0, 0, 0, 0)
+        _ph_row.setSpacing(0)
+        _ph_spacer = QWidget()
+        _ph_spacer.setFixedSize(54, 48)
+        _ph_spacer.setStyleSheet("background: transparent; border: none;")
+        self.nudge_btn = QPushButton("")
+        self.nudge_btn.setCheckable(True)
+        self.nudge_btn.setCursor(Qt.PointingHandCursor)
+        self.nudge_btn.setFixedSize(54, 48)
+        self.nudge_btn.setIcon(QIcon(resource_path("assets/movement.png")))
+        self.nudge_btn.setIconSize(QSize(30, 30))
+        self.nudge_btn.setToolTip("Перемещение текста этикетки: вкл/выкл")
+        self.nudge_btn.setStyleSheet(
+            "QPushButton { background:#ffffff; border:1px solid #cfd6e0; border-radius:10px; }"
+            "QPushButton:hover { background:#f8fafc; }"
+            "QPushButton:checked { background:#f9b233; border-color:#f9b233; }"
+        )
+        self.nudge_btn.toggled.connect(self._on_nudge_toggled)
+        _ph_row.addWidget(_ph_spacer, 0, Qt.AlignVCenter)
+        _ph_row.addWidget(self.preview_header, 1, Qt.AlignHCenter | Qt.AlignVCenter)
+        _ph_row.addWidget(self.nudge_btn, 0, Qt.AlignRight | Qt.AlignVCenter)
+        right_layout.addLayout(_ph_row, 0)
 
         # toolbar
         tb = QHBoxLayout()
@@ -2497,9 +2604,8 @@ class MirlisMarkApp(QWidget):
         self.preview.setStyleSheet(
             """
             QTextEdit {
-                background: #ffffff;
-                border: 1px solid #cfd6e0;
-                border-radius: 18px;
+                background: transparent;
+                border: none;
                 padding: 18px 2px;
             }
             """
@@ -2512,11 +2618,29 @@ class MirlisMarkApp(QWidget):
         # Логический размер этикетки фиксирован (450 × пропорция мм); вписывание в окно — только
         # масштаб QGraphicsView, без изменения pt в QTextDocument (иначе «плывёт» между мониторами).
         self._preview_scene = QGraphicsScene(self)
+
+        # Подложка-«наклейка» (белый скруглённый фон) — НЕПОДВИЖНА; текст двигается над ней.
+        self._sticker_bg = QFrame()
+        self._sticker_bg.setObjectName("StickerBg")
+        self._sticker_bg.setStyleSheet(
+            "QFrame#StickerBg { background:#ffffff; border:1px solid #cfd6e0; border-radius:18px; }"
+        )
+        _sw0, _sh0 = self._logical_preview_size()
+        self._sticker_bg.setFixedSize(_sw0, _sh0)
+        self._sticker_proxy = QGraphicsProxyWidget()
+        self._sticker_proxy.setWidget(self._sticker_bg)
+        self._sticker_proxy.setZValue(0.0)
+        self._sticker_proxy.setPos(0.0, 0.0)
+        self._preview_scene.addItem(self._sticker_proxy)
+
         self._preview_proxy = QGraphicsProxyWidget()
         self._preview_proxy.setWidget(self.preview)
+        self._preview_proxy.setZValue(1.0)
         self._preview_scene.addItem(self._preview_proxy)
 
-        self.preview_view = QGraphicsView(self._preview_scene, self.preview_wrap)
+        self.preview_view = _NudgeableView(self._preview_scene, self.preview_wrap)
+        self.preview_view.nudged.connect(self._on_label_nudged)
+        self.preview_view._overflow_painter = self._paint_overflow_red
         self.preview_view.setObjectName("LabelPreviewView")
         self.preview_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.preview_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -3646,6 +3770,66 @@ class MirlisMarkApp(QWidget):
         ref_h = int(round(ref_w * (h_mm / w_mm)))
         return ref_w, max(180, ref_h)
 
+    def _apply_label_offset(self) -> None:
+        if hasattr(self, "_preview_proxy"):
+            self._preview_proxy.setPos(
+                float(getattr(self, "_label_dx", 0.0)),
+                float(getattr(self, "_label_dy", 0.0)),
+            )
+        if hasattr(self, "preview_view") and self.preview_view.viewport() is not None:
+            self.preview_view.viewport().update()
+
+    def _paint_overflow_red(self, painter) -> None:
+        """Красным — часть ТЕКСТА, вышедшая за «наклейку» (со всех сторон). Только предпросмотр."""
+        if not getattr(self, "_nudge_mode", False):
+            return
+        dx = float(getattr(self, "_label_dx", 0.0))
+        dy = float(getattr(self, "_label_dy", 0.0))
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            return
+        lw, lh = self._logical_preview_size()
+        # Область ВНЕ наклейки (координаты сцены) — со всех четырёх сторон.
+        big = QRect(int(-lw - 4000), int(-lh - 4000), int(3 * lw + 8000), int(3 * lh + 8000))
+        outside = QRegion(big).subtracted(QRegion(QRect(0, 0, int(lw), int(lh))))
+        # Копия документа с красным текстом (оригинал и печать не трогаем).
+        red_doc = self.preview.document().clone(self)
+        red_doc.setTextWidth(float(lw))
+        cur = QTextCursor(red_doc)
+        cur.select(QTextCursor.Document)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(214, 40, 40))
+        cur.mergeCharFormat(fmt)
+        # Внутренний отступ QTextEdit — чтобы красный текст лёг ровно поверх чёрного.
+        off = self.preview.viewport().geometry().topLeft()
+        painter.save()
+        painter.setClipRegion(outside)
+        painter.translate(dx + off.x(), dy + off.y())
+        red_doc.drawContents(painter)
+        painter.restore()
+
+    def _on_label_nudged(self, ddx: float, ddy: float) -> None:
+        lw, lh = self._logical_preview_size()
+        max_x = max(10.0, lw * 0.25)
+        max_y = max(10.0, lh * 0.25)
+        self._label_dx = max(-max_x, min(max_x, float(getattr(self, "_label_dx", 0.0)) + float(ddx)))
+        self._label_dy = max(-max_y, min(max_y, float(getattr(self, "_label_dy", 0.0)) + float(ddy)))
+        self._apply_label_offset()
+
+    def _on_nudge_toggled(self, checked: bool) -> None:
+        self._nudge_mode = bool(checked)
+        if hasattr(self, "preview_view") and hasattr(self.preview_view, "set_nudge_enabled"):
+            self.preview_view.set_nudge_enabled(self._nudge_mode)
+        if hasattr(self, "preview") and self.preview.viewport() is not None:
+            if checked:
+                self.preview.viewport().setCursor(_make_move_cursor(48))
+            else:
+                self.preview.viewport().unsetCursor()
+        if not checked:
+            # Выключение карандаша — сброс в позицию по умолчанию (текущая и все следующие).
+            self._label_dx = 0.0
+            self._label_dy = 0.0
+            self._apply_label_offset()
+
     def _fit_label_preview_graphics(self):
         """Вписывает логическую этикетку в область view; масштаб ≤ 1, шрифты документа не трогаем."""
         if not getattr(self, "preview_view", None):
@@ -3653,13 +3837,19 @@ class MirlisMarkApp(QWidget):
         lw, lh = self._logical_preview_size()
         if hasattr(self, "_preview_scene"):
             self._preview_scene.setSceneRect(0.0, 0.0, float(lw), float(lh))
+        if hasattr(self, "_sticker_bg"):
+            self._sticker_bg.setFixedSize(int(lw), int(lh))
+        if hasattr(self, "_sticker_proxy"):
+            self._sticker_proxy.setPos(0.0, 0.0)
         if hasattr(self, "_preview_proxy"):
-            self._preview_proxy.setPos(0.0, 0.0)
+            self._apply_label_offset()
 
         vw = max(2, self.preview_view.viewport().width())
         vh = max(2, self.preview_view.viewport().height())
         s = min(vw / float(lw), vh / float(lh))
-        s = min(float(s), 1.0)
+        # Запас вокруг наклейки со всех сторон, чтобы был виден вылезший за край текст
+        # (иначе сверху/снизу его срезает граница вью).
+        s = min(float(s), 1.0) * 0.82
 
         self.preview_view.resetTransform()
         if s > 0:
@@ -3681,8 +3871,12 @@ class MirlisMarkApp(QWidget):
 
         if hasattr(self, "_preview_scene"):
             self._preview_scene.setSceneRect(0.0, 0.0, float(lw), float(lh))
+        if hasattr(self, "_sticker_bg"):
+            self._sticker_bg.setFixedSize(int(lw), int(lh))
+        if hasattr(self, "_sticker_proxy"):
+            self._sticker_proxy.setPos(0.0, 0.0)
         if hasattr(self, "_preview_proxy"):
-            self._preview_proxy.setPos(0.0, 0.0)
+            self._apply_label_offset()
 
         QTimer.singleShot(0, self._fit_label_preview_graphics)
     def _on_label_size_changed(self, index):
@@ -5775,6 +5969,13 @@ class MirlisMarkApp(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         painter.scale(scale_x, scale_y)
+
+        # Сдвиг «карандашом»: те же логические px холста 450, что и в превью
+        # (после scale() единицы painter = виртуальные px; X и Y масштаб одинаковы).
+        painter.translate(
+            float(getattr(self, "_label_dx", 0.0)),
+            float(getattr(self, "_label_dy", 0.0)),
+        )
 
         # Для «Цветных» этикеток (приходят с типографии с верхней цветной
         # полосой и днём недели) сдвигаем текст вниз на ~2 мм, чтобы первая
