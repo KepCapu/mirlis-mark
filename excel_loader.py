@@ -77,6 +77,11 @@ def _parse_units(raw_units: Any) -> List[str]:
         "шт": "шт",
         "штука": "шт",
         "штуки": "шт",
+        "порц": "порц",
+        "порция": "порц",
+        "порции": "порц",
+        "portion": "порц",
+        "portions": "порц",
     }
 
     out: List[str] = []
@@ -154,6 +159,10 @@ def load_products(excel_path: str, sheet_name: str = "продукт") -> List[D
             shelf_life_hours = 0
 
         allowed_units = _parse_units(_get(r, idx_units, ""))
+
+        # пропускаем товары без срока годности или без единиц измерения
+        if shelf_life_hours <= 0 or not allowed_units:
+            continue
 
         active = _parse_yes_no(_get(r, idx_active, 1))
 

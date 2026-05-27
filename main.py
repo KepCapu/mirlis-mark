@@ -5256,7 +5256,7 @@ class MirlisMarkApp(QWidget):
 
     def _step_for_unit(self):
         unit_ru = self.unit_combo.currentText()
-        return 1.0 if unit_ru == "шт" else 0.1
+        return 1.0 if unit_ru in ("шт", "порц") else 0.1
 
     # ─── Весы (COM-порт, автоопределение) ───────────────────
     _SCALE_BAUD = 9600
@@ -5517,6 +5517,8 @@ class MirlisMarkApp(QWidget):
             return "kg"
         if unit_text == "шт":
             return "pcs"
+        if unit_text == "порц":
+            return "portion"
         return None
 
     def _made_value(self):
@@ -5632,7 +5634,7 @@ class MirlisMarkApp(QWidget):
             return ("Выберите продукт.", False)
 
         if unit_code is None:
-            return ("Выберите единицу измерения (кг или шт).", False)
+            return ("Выберите единицу измерения (кг, шт или порц).", False)
 
         if not qty:
             return ("Введите количество.", False)
@@ -5645,8 +5647,8 @@ class MirlisMarkApp(QWidget):
         if qty_float <= 0:
             return ("Количество должно быть больше 0.", False)
 
-        if unit_code == "pcs" and abs(qty_float - round(qty_float)) > 1e-9:
-            return ("Для 'шт' количество должно быть целым числом.", False)
+        if unit_code in ("pcs", "portion") and abs(qty_float - round(qty_float)) > 1e-9:
+            return ("Для 'шт' и 'порц' количество должно быть целым числом.", False)
 
         made_by = self._made_value()
         checked_by = self._checked_value()
@@ -5677,7 +5679,10 @@ class MirlisMarkApp(QWidget):
             text_parts.append(f"{label.weekday}")
 
         text_parts.append(f"Продукт: {label.product_name}")
-        text_parts.append(f"Вес/шт: {label.qty_value} {label.qty_unit_ru}")
+        qty_unit_ru = label.qty_unit_ru
+        if unit_code == "portion":
+            qty_unit_ru = "порц"
+        text_parts.append(f"Вес/шт: {label.qty_value} {qty_unit_ru}")
         text_parts.append(f"Дата/время: {format_dt(label.produced_at)}")
         text_parts.append(f"№ партии: {label.batch}")
         text_parts.append(f"Годен до: {format_dt(label.expires_at)}")
