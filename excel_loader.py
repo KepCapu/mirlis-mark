@@ -164,7 +164,10 @@ def load_products(excel_path: str, sheet_name: str = "продукт") -> List[D
         if shelf_life_hours <= 0 or not allowed_units:
             continue
 
-        active = _parse_yes_no(_get(r, idx_active, 1))
+        # Пустая ячейка в "Активен" => неактивен (показываем только "Да").
+        # Если колонки нет вовсе — считаем активным для обратной совместимости.
+        default_active = 1 if idx_active is None else ""
+        active = _parse_yes_no(_get(r, idx_active, default_active))
 
         comment = str(_get(r, idx_comment, "")).strip()
 
