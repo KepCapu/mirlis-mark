@@ -69,7 +69,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRect, QRectF, QEasingCurve
 from PyQt5.QtCore import QObject
-from PyQt5.QtCore import QStringListModel
 from PyQt5.QtGui import (
     QDesktopServices,
     QIcon,
@@ -88,6 +87,8 @@ from PyQt5.QtGui import (
     QPen,
     QRegion,
     QCursor,
+    QStandardItem,
+    QStandardItemModel,
 )
 
 # PyQt5: мультимедиа
@@ -614,6 +615,22 @@ class PlainFontNameDelegate(QStyledItemDelegate):
         opt = option
         opt.font = QFont("Segoe UI", opt.font.pointSize())
         super().paint(painter, opt, index)
+
+
+class ProductCompleter(QCompleter):
+    """QCompleter, который сопоставляет ввод с EditRole ("[код] имя"),
+    но при выборе пункта возвращает чистое имя товара, хранящееся
+    в Qt.UserRole. Так код в попапе виден (в скобках), а в combobox
+    после выбора попадает только имя."""
+    def pathFromIndex(self, index):
+        if not index.isValid():
+            return ""
+        # Сначала пытаемся взять чистое имя из UserRole.
+        name = index.data(Qt.UserRole)
+        if name:
+            return str(name)
+        # Fallback: отдаём DisplayRole.
+        return index.data(Qt.DisplayRole) or ""
 
 
 class ToolBtn(QToolButton):
@@ -2268,8 +2285,8 @@ class MirlisMarkApp(QWidget):
         QScroller.grabGesture(self.product_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
         left_layout.addWidget(self.product_combo)
 
-        self.product_model = QStringListModel([])
-        self.product_completer = QCompleter(self.product_model, self)
+        self.product_model = QStandardItemModel(self)
+        self.product_completer = ProductCompleter(self.product_model, self)
         self.product_completer.setCaseSensitivity(Qt.CaseInsensitive)
         self.product_completer.setFilterMode(Qt.MatchContains)
         self.product_completer.setCompletionMode(QCompleter.PopupCompletion)
@@ -3020,11 +3037,13 @@ class MirlisMarkApp(QWidget):
             if hasattr(self, "label_size_combo") and combo is self.label_size_combo:
                 return 4
             if hasattr(self, "unit_combo") and combo is self.unit_combo:
-                return 2
+                return 3
             return 8
 
         def _popup_width_mult(combo: QComboBox) -> float:
             if hasattr(self, "font_size_combo") and combo is self.font_size_combo:
+                return 1.5
+            if hasattr(self, "unit_combo") and combo is self.unit_combo:
                 return 1.5
             return 1.0
 
@@ -4177,7 +4196,22 @@ class MirlisMarkApp(QWidget):
         for n in names:
             self.product_combo.addItem(n)
 
-        self.product_model.setStringList(names)
+        # Перезаполнение модели для completer'а:
+        #   DisplayRole = "[код] имя" — то, что видит пользователь в попапе;
+        #   EditRole    = то же самое — то, по чему MatchContains ищет
+        #                 (так находим и по коду, и по имени);
+        #   UserRole    = чистое имя — что попадает в combobox при выборе.
+        # Если код пустой — отображаем просто имя без скобок.
+        self.product_model.clear()
+        for p in self.products:
+            name = (p.get("name") or "").strip()
+            if not name:
+                continue
+            code = str(p.get("product_id") or "").strip()
+            display = f"[{code}] {name}" if code else name
+            item = QStandardItem(display)
+            item.setData(name, Qt.UserRole)
+            self.product_model.appendRow(item)
 
         self.product_combo.setCurrentIndex(-1)
         self.product_combo.setEditText("")
