@@ -1521,6 +1521,8 @@ class MirlisMarkApp(QWidget):
     def __init__(self, app_mode="pc"):
         super().__init__()
         self.app_mode = app_mode
+        # UI-масштаб ТОЛЬКО для ПК (авторасчёт от DPI экрана). Планшет = 1.0.
+        self._pc_ui_scale = self._compute_pc_ui_scale()
         self.setWindowIcon(QIcon(resource_path("assets/mark_app.ico")))
         self.setWindowTitle(APP_TITLE)
 
@@ -2065,11 +2067,8 @@ class MirlisMarkApp(QWidget):
         self.tools_frame.setStyleSheet(
             "#ExcelToolsFrame { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 18px; }"
         )
-        _tools_shadow = QGraphicsDropShadowEffect(self.tools_frame)
-        _tools_shadow.setBlurRadius(18)
-        _tools_shadow.setOffset(0, 4)
-        _tools_shadow.setColor(QColor(0, 0, 0, 35))
-        self.tools_frame.setGraphicsEffect(_tools_shadow)
+        # Тень у блока "Файлы данных" убрана полностью (и на ПК, и на планшете).
+        # Оставляем только рамку из стиля — эффект тени не применяем.
 
         tools_layout = QHBoxLayout(self.tools_frame)
         tools_layout.setContentsMargins(14, 8, 14, 8)
@@ -2156,6 +2155,18 @@ class MirlisMarkApp(QWidget):
         )
         self.stats_title_lbl.setVisible(False)
         center_cell_lay.addWidget(self.stats_title_lbl, 1)
+        self.center_cell_lay = center_cell_lay
+        # ПК: скрытый виджет со stretch=1 в QHBoxLayout всё равно резервирует
+        # место и тянет "Файлы данных" влево. Поэтому на ПК растяжение несёт
+        # только видимый виджет. По умолчанию режим печати: виден tools_frame.
+        if getattr(self, "app_mode", "pc") == "pc":
+            center_cell_lay.setStretch(0, 1)  # tools_frame (виден в печати)
+            center_cell_lay.setStretch(1, 0)  # stats_title (скрыт)
+            # Небольшой сдвиг блока "Файлы данных" вправо, чтобы он сел ровно
+            # по центру над "Предпросмотр". Это левый отступ ячейки; визуальный
+            # сдвиг ≈ половина этого числа (48 → примерно +24px). Подбирается
+            # на глаз — при необходимости меняем только это число.
+            center_cell_lay.setContentsMargins(30, 0, 0, 0)
         top_layout.addWidget(center_cell, 4)
 
         # ===== Кнопка статистики (справа) =====
@@ -2178,6 +2189,14 @@ class MirlisMarkApp(QWidget):
         right_cell_lay.addStretch(1)
         right_cell_lay.addWidget(self.stats_btn, 0, Qt.AlignVCenter)
         top_layout.addWidget(right_cell, 3)
+
+        # ПК: самую малость расширяем центральную ячейку верхней панели, чтобы
+        # блок "Файлы данных" стал чуть длиннее. Доли боковых ячеек симметричны,
+        # поэтому позиция (центр) сохраняется. Значение подбирается на глаз.
+        if getattr(self, "app_mode", "pc") == "pc":
+            top_layout.setStretch(0, 13)  # left_cell
+            top_layout.setStretch(1, 24)  # center_cell (чуть больше прежних 4)
+            top_layout.setStretch(2, 13)  # right_cell
 
         # excel_pill больше не показывается в верхней панели, но виджет создан
         # выше — оставляем его невидимым, чтобы существующие вызовы update_excel_status()
@@ -2303,15 +2322,16 @@ class MirlisMarkApp(QWidget):
         lab_units = QLabel("Ед. изм.")
         lab_units.setObjectName("FieldLabel")
         lab_units.setAlignment(Qt.AlignCenter)
-        lab_units.setFixedHeight(45)
+        lab_units.setFixedHeight(self._s(45))
         lab_units.setStyleSheet(
             "#FieldLabel { background: #eef2f6; border-radius: 14px; "
-            "padding: 8px 16px; font-size: 16px; font-weight: 500; color: #1E2F45; }"
+            f"padding: {self._s(8)}px {self._s(16)}px; font-size: {self._s(16)}px; "
+            "font-weight: 500; color: #1E2F45; }"
         )
         col_units.addWidget(lab_units)
 
         self.unit_combo = ComboBoxFixedArrow()
-        self.unit_combo.setFixedHeight(45)
+        self.unit_combo.setFixedHeight(self._s(45))
         self.unit_combo.setStyleSheet(
             "QComboBox { min-height: 45px; padding: 0 44px 0 14px; "
             "border: 1px solid #cfd6e0; border-radius: 12px; background: #ffffff; "
@@ -2334,16 +2354,17 @@ class MirlisMarkApp(QWidget):
         self.scale_btn.setFocusPolicy(Qt.NoFocus)
         _scales_pix = QPixmap(resource_path("assets/scales.png"))
         if not _scales_pix.isNull():
-            _scales_pix = _scales_pix.scaledToHeight(28, Qt.SmoothTransformation)
+            _scales_pix = _scales_pix.scaledToHeight(self._s(28), Qt.SmoothTransformation)
             self.scale_btn.setIcon(QIcon(_scales_pix))
-            self.scale_btn.setIconSize(QSize(28, 28))
+            self.scale_btn.setIconSize(QSize(self._s(28), self._s(28)))
         self.scale_btn.setStyleSheet(
-            "#Btn_default { font-size: 18px; font-weight: 700; padding: 8px 14px; }"
+            f"#Btn_default {{ font-size: {self._s(18)}px; font-weight: 700; "
+            f"padding: {self._s(8)}px {self._s(14)}px; }}"
         )
         self.scale_btn.clicked.connect(self._read_scale_weight)
 
         col_units.addWidget(self.unit_combo)
-        col_units.addSpacing(20)
+        col_units.addSpacing(self._s(20))
         col_units.addWidget(self.scale_btn)
         col_units.addStretch(1)
         grid.addLayout(col_units, 2)
@@ -2356,10 +2377,11 @@ class MirlisMarkApp(QWidget):
         self.qty_input.setPlaceholderText("Введите количество")
         self.qty_input.setAlignment(Qt.AlignCenter)
         self.qty_input.setStyleSheet(
-            "QLineEdit { font-size: 18px; font-weight: 700; padding: 8px 12px; }"
+            f"QLineEdit {{ font-size: {self._s(18)}px; font-weight: 700; "
+            f"padding: {self._s(8)}px {self._s(12)}px; }}"
             "QLineEdit:focus { border: 1px solid #6ea8fe; }"
         )
-        self.qty_input.setMinimumHeight(64)
+        self.qty_input.setMinimumHeight(self._s(64))
         col_qty.addWidget(self.qty_input)
 
         # --- Нижний ряд: кнопки "−" и "+" (на уровне combobox единиц) ---
@@ -2373,7 +2395,7 @@ class MirlisMarkApp(QWidget):
         self.minus_btn.setAutoRepeatDelay(400)
         self.minus_btn.setAutoRepeatInterval(80)
         self.minus_btn.setStyleSheet(
-            "#Btn_default { font-size: 29px; font-weight: 900; padding: 0px; }"
+            f"#Btn_default {{ font-size: {self._s(29)}px; font-weight: 900; padding: 0px; }}"
         )
 
         self.plus_btn = ActionBtn("+", kind="default")
@@ -2381,7 +2403,7 @@ class MirlisMarkApp(QWidget):
         self.plus_btn.setAutoRepeatDelay(400)
         self.plus_btn.setAutoRepeatInterval(80)
         self.plus_btn.setStyleSheet(
-            "#Btn_default { font-size: 29px; font-weight: 900; padding: 0px; }"
+            f"#Btn_default {{ font-size: {self._s(29)}px; font-weight: 900; padding: 0px; }}"
         )
 
         self.minus_btn.clicked.connect(self.decrease_qty)
@@ -2391,17 +2413,17 @@ class MirlisMarkApp(QWidget):
 
         qty_btn_row.addWidget(self.minus_btn, 1)
         qty_btn_row.addWidget(self.plus_btn, 1)
-        col_qty.addSpacing(20)
+        col_qty.addSpacing(self._s(20))
         col_qty.addLayout(qty_btn_row)
 
         grid.addLayout(col_qty, 3)  # фактическое соотношение col_units:col_qty = 2:3
 
         # Синхронизация: поле ввода — крупнее, кнопки −/+ выровнены по высоте с unit_combo
-        self.qty_input.setMinimumHeight(64)
-        self.minus_btn.setMinimumHeight(64)
-        self.plus_btn.setMinimumHeight(64)
-        self.minus_btn.setMinimumWidth(70)
-        self.plus_btn.setMinimumWidth(70)
+        self.qty_input.setMinimumHeight(self._s(64))
+        self.minus_btn.setMinimumHeight(self._s(64))
+        self.plus_btn.setMinimumHeight(self._s(64))
+        self.minus_btn.setMinimumWidth(self._s(70))
+        self.plus_btn.setMinimumWidth(self._s(70))
 
         # Выравнивание кнопок −/+ по вертикали с unit_combo (под полем qty_input).
         # Поскольку qty_input выше unit_combo, qty_btn_row нужно прижать к низу — добавим stretch сверху qty_btn_row.
@@ -2586,6 +2608,17 @@ class MirlisMarkApp(QWidget):
             props.setScrollMetric(QScrollerProperties.AxisLockThreshold, 0.0)
             scroller.setScrollerProperties(props)
         QScroller.grabGesture(self.font_combo.view().viewport(), QScroller.LeftMouseButtonGesture)
+
+        # ПК: высота кнопок тулбара (A-/A+/Ж/К/Ч/выравнивание) подгоняется под
+        # высоту комбобоксов размера шрифта/шрифта (48px из общего движка).
+        # На планшете не трогаем — там высоты совпадают за счёт системного
+        # шрифта 125%.
+        if getattr(self, "app_mode", "pc") == "pc":
+            for _tb_btn in (self.btn_font_minus, self.btn_font_plus,
+                            self.btn_bold, self.btn_italic, self.btn_underline,
+                            self.btn_align_left, self.btn_align_center,
+                            self.btn_align_right):
+                _tb_btn.setMinimumHeight(48)
 
         tb.addWidget(self.btn_font_minus)
         tb.addWidget(self.btn_font_plus)
@@ -3691,6 +3724,54 @@ class MirlisMarkApp(QWidget):
         except Exception:
             pass
 
+    def _compute_pc_ui_scale(self):
+        """UI-масштаб ТОЛЬКО для ПК — авто от ФИЗИЧЕСКОЙ диагонали самого
+        большого подключённого экрана. DPI не различает мониторы при
+        одинаковом % масштабирования, а основной монитор может быть не тем,
+        где смотрят ПК-режим (окно открывается на основном). ПК-режим всегда
+        нацелен на крупный рабочий монитор — берём наибольший экран. Это
+        корректно и в одно-мониторном проде, и в дев-сборке с двумя экранами.
+        На планшете всегда 1.0 — планшетный визуал не трогаем."""
+        if getattr(self, "app_mode", "pc") != "pc":
+            return 1.0
+        FALLBACK = 1.2
+        try:
+            app = QApplication.instance()
+            if app is None:
+                return FALLBACK
+            best_diag = 0.0
+            for screen in app.screens():
+                try:
+                    size_mm = screen.physicalSize()  # мм, из EDID, не зависит от %
+                    w_mm = float(size_mm.width())
+                    h_mm = float(size_mm.height())
+                    if w_mm <= 1.0 or h_mm <= 1.0:
+                        continue
+                    diag = ((w_mm ** 2 + h_mm ** 2) ** 0.5) / 25.4
+                    if 5.0 <= diag <= 80.0 and diag > best_diag:
+                        best_diag = diag
+                except Exception:
+                    continue
+            if best_diag <= 0.0:
+                return FALLBACK
+            # Линейно: 18" → 1.0; +0.035 за каждый дюйм сверх 18".
+            # 24" ≈ 1.21, 27" ≈ 1.31. Ограничение [1.0, 1.35].
+            scale = 1.0 + (best_diag - 18.0) * 0.035
+            return max(1.0, min(scale, 1.35))
+        except Exception:
+            return FALLBACK
+
+    def _s(self, px):
+        """UI-масштаб ТОЛЬКО для ПК. На планшете возвращает исходное значение
+        без изменений (байт-в-байт), поэтому общий код для планшета
+        не меняется."""
+        try:
+            if getattr(self, "app_mode", "pc") != "pc":
+                return int(round(px))
+            return int(round(px * float(getattr(self, "_pc_ui_scale", 1.0))))
+        except Exception:
+            return int(round(px))
+
     def _effective_preview_font_scale(self):
         """Множитель pt в документе: окно (_preview_scale) × компенсация экрана."""
         a = float(getattr(self, "_preview_scale", 1.0) or 1.0)
@@ -4786,6 +4867,14 @@ class MirlisMarkApp(QWidget):
         except Exception:
             pass
 
+        # ПК: растяжение несёт только видимый виджет (иначе скрытый резервирует
+        # место и сдвигает блок). Планшет не трогаем.
+        if getattr(self, "app_mode", "pc") == "pc":
+            _ccl = getattr(self, "center_cell_lay", None)
+            if _ccl is not None:
+                _ccl.setStretch(0, 0 if enabled else 1)  # tools_frame
+                _ccl.setStretch(1, 1 if enabled else 0)  # stats_title
+
         for b in (
             getattr(self, "day_btn", None),
             getattr(self, "week_btn", None),
@@ -5381,9 +5470,9 @@ class MirlisMarkApp(QWidget):
         try:
             _pix = QPixmap(resource_path("assets/scales.png"))
             if not _pix.isNull():
-                _pix = _pix.scaledToHeight(28, Qt.SmoothTransformation)
+                _pix = _pix.scaledToHeight(self._s(28), Qt.SmoothTransformation)
                 self.scale_btn.setIcon(QIcon(_pix))
-                self.scale_btn.setIconSize(QSize(28, 28))
+                self.scale_btn.setIconSize(QSize(self._s(28), self._s(28)))
         except Exception:
             pass
 
