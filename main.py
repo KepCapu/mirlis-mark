@@ -68,7 +68,7 @@ from PyQt5.QtWidgets import (
     QGraphicsDropShadowEffect,
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl, QSize, QDateTime, QDate, QTime, pyqtSignal, QPoint, QLocale, QEvent, QSizeF, QRect, QRectF, QEasingCurve
-from PyQt5.QtCore import QObject
+from PyQt5.QtCore import QObject, QSortFilterProxyModel
 from PyQt5.QtGui import (
     QDesktopServices,
     QIcon,
@@ -617,20 +617,61 @@ class PlainFontNameDelegate(QStyledItemDelegate):
         super().paint(painter, opt, index)
 
 
+class _ProductFilterProxy(QSortFilterProxyModel):
+    """Фильтр товаров по токенам: ввод разбивается по пробелам, строка
+    подходит, если КАЖДЫЙ токен встречается (подстрокой, без учёта регистра)
+    в тексте позиции. «Брок жар» находит «Брокколи жареная»."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tokens = []
+
+    def set_query(self, text):
+        self._tokens = [t for t in str(text or "").lower().split() if t]
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        if not self._tokens:
+            return True
+        src = self.sourceModel()
+        if src is None:
+            return True
+        idx = src.index(source_row, 0, source_parent)
+        hay = idx.data(Qt.EditRole)
+        if not hay:
+            hay = idx.data(Qt.DisplayRole)
+        hay = str(hay or "").lower()
+        return all(tok in hay for tok in self._tokens)
+
+
 class ProductCompleter(QCompleter):
-    """QCompleter, который сопоставляет ввод с EditRole ("[код] имя"),
-    но при выборе пункта возвращает чистое имя товара, хранящееся
-    в Qt.UserRole. Так код в попапе виден (в скобках), а в combobox
-    после выбора попадает только имя."""
+    """«Умный» автокомплит товара:
+    - поиск по токенам (через _ProductFilterProxy): «Брок жар» → «Брокколи жареная»;
+    - в попапе видно «[код] имя» (поиск и по коду, и по названию);
+    - при выборе пункта в combobox попадает только чистое имя (Qt.UserRole)."""
+    def __init__(self, model, parent=None):
+        super().__init__(parent)
+        self._proxy = _ProductFilterProxy(self)
+        self._proxy.setSourceModel(model)
+        self.setModel(self._proxy)
+        self.setCaseSensitivity(Qt.CaseInsensitive)
+        self.setCompletionMode(QCompleter.PopupCompletion)
+
+    def splitPath(self, path):
+        # Обновляем токен-фильтр; пустой префикс совпадает со всеми строками,
+        # прошедшими фильтр прокси — попап покажет именно их.
+        self._proxy.set_query(path)
+        return [""]
+
     def pathFromIndex(self, index):
         if not index.isValid():
             return ""
-        # Сначала пытаемся взять чистое имя из UserRole.
         name = index.data(Qt.UserRole)
         if name:
             return str(name)
-        # Fallback: отдаём DisplayRole.
-        return index.data(Qt.DisplayRole) or ""
+        disp = str(index.data(Qt.DisplayRole) or "")
+        if disp.startswith("[") and "] " in disp:
+            return disp.split("] ", 1)[1]
+        return disp
 
 
 class ToolBtn(QToolButton):
