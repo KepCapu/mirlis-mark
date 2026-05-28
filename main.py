@@ -4503,8 +4503,13 @@ class MirlisMarkApp(QWidget):
         add_title("1. Лист «продукт»")
         add_text(
             "Заголовки: Код | Наименование | Срок годности (ч) | Ед. измер. | Активен | Комментарий\n\n"
-            "• «Ед. измер.» — через запятую: кг, шт или кг,шт\n"
-            "• «Активен» — Да или 1 (показывать), Нет или 0 (скрыть)"
+            "• «Код» — по нему можно искать товар в приложении (помимо названия)\n"
+            "• «Срок годности (ч)» обязателен — без него позиция не появится\n"
+            "• «Ед. измер.» — кг, шт или порц (можно несколько через запятую). "
+            "Заданная подставится по умолчанию; работник может выбрать любую. "
+            "Можно оставить пустым\n"
+            "• «Активен» — Да или 1 (показывать); Нет, 0 или пусто (скрыть)\n"
+            "• «Комментарий» — необязателен"
         )
         add_image(HELP_IMG_PRODUCT)
 
@@ -4990,8 +4995,13 @@ class MirlisMarkApp(QWidget):
         add_title("1. Лист «продукт»")
         add_text(
             "Заголовки: Код | Наименование | Срок годности (ч) | Ед. измер. | Активен | Комментарий\n\n"
-            "• «Ед. измер.» — через запятую: кг, шт или кг,шт\n"
-            "• «Активен» — Да или 1 (показывать), Нет или 0 (скрыть)"
+            "• «Код» — по нему можно искать товар в приложении (помимо названия)\n"
+            "• «Срок годности (ч)» обязателен — без него позиция не появится\n"
+            "• «Ед. измер.» — кг, шт или порц (можно несколько через запятую). "
+            "Заданная подставится по умолчанию; работник может выбрать любую. "
+            "Можно оставить пустым\n"
+            "• «Активен» — Да или 1 (показывать); Нет, 0 или пусто (скрыть)\n"
+            "• «Комментарий» — необязателен"
         )
         add_image(HELP_IMG_PRODUCT)
 
@@ -5353,25 +5363,39 @@ class MirlisMarkApp(QWidget):
         self.unit_combo.blockSignals(True)
         self.unit_combo.clear()
 
+        # Единицы: пользователь всегда может выбрать любую из трёх (кг/шт/порц).
+        # Порядок: сначала единицы из таблицы (в их порядке), затем остальные —
+        # чтобы заданная в Excel единица была первой (по умолчанию).
+        ALL_UNITS = ["кг", "шт", "порц"]
         product = self.get_product(product_name)
+        ordered = []
         if product:
             units = product.get("allowed_units", [])
             if isinstance(units, str):
                 units = [u.strip() for u in units.split(",") if u.strip()]
-
-            # добавляем только непустые уникальные значения
             seen = set()
             for u in units:
                 u = (u or "").strip()
-                if not u or u in seen:
-                    continue
-                seen.add(u)
                 if u == "kg":
-                    self.unit_combo.addItem("кг")
+                    u = "кг"
                 elif u == "pcs":
-                    self.unit_combo.addItem("шт")
-                else:
-                    self.unit_combo.addItem(u)
+                    u = "шт"
+                if u in ALL_UNITS and u not in seen:
+                    seen.add(u)
+                    ordered.append(u)
+            # дополняем оставшиеся единицы в каноническом порядке кг → шт → порц
+            for u in ALL_UNITS:
+                if u not in seen:
+                    seen.add(u)
+                    ordered.append(u)
+            if not ordered:
+                ordered = list(ALL_UNITS)
+
+        for u in ordered:
+            self.unit_combo.addItem(u)
+        # по умолчанию — первая единица (заданная в таблице)
+        if ordered and not getattr(self, "_loading_from_history", False):
+            self.unit_combo.setCurrentIndex(0)
 
         self.unit_combo.blockSignals(False)
         if not getattr(self, "_loading_from_history", False):

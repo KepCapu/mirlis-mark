@@ -160,8 +160,9 @@ def load_products(excel_path: str, sheet_name: str = "продукт") -> List[D
 
         allowed_units = _parse_units(_get(r, idx_units, ""))
 
-        # пропускаем товары без срока годности или без единиц измерения
-        if shelf_life_hours <= 0 or not allowed_units:
+        # пропускаем только товары без срока годности; единица измерения
+        # больше не обязательна — работник выбирает её сам в приложении
+        if shelf_life_hours <= 0:
             continue
 
         # Пустая ячейка в "Активен" => неактивен (показываем только "Да").
