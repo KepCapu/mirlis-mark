@@ -15,13 +15,14 @@ VSVersionInfo(
         StringTable(
           '040904B0',
           [
-            StringStruct('CompanyName', 'KepCapu'),
-            StringStruct('FileDescription', 'Mirlis Mark'),
+            StringStruct('CompanyName', 'LDN Tech'),
+            StringStruct('FileDescription', 'Mark — Система маркировки'),
             StringStruct('FileVersion', '1.0.0.0'),
-            StringStruct('InternalName', 'MirlisMark'),
-            StringStruct('OriginalFilename', 'MirlisMark.exe'),
-            StringStruct('ProductName', 'Mirlis Mark'),
+            StringStruct('InternalName', 'Mark'),
+            StringStruct('OriginalFilename', 'Mark.exe'),
+            StringStruct('ProductName', 'Mark'),
             StringStruct('ProductVersion', '1.0.0.0'),
+            StringStruct('LegalCopyright', '© 2026 Михаил Ладин (LDN Tech)'),
           ]
         )
       ]

@@ -1,34 +1,22 @@
-﻿__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# ── Артефакты сборки (генерируются, в репозитории не храним) ──
+build/
+dist/
+installer/*.exe
 
-# venv
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
 .venv/
 venv/
 env/
 
-# data
-data_sources/*
-!data_sources/.keep
-*.xlsx
-
-# IDE
-.idea/
-.vscode/
-
-# OS
-Thumbs.db
-.DS_Store
-
-# secrets
-.env
-
-# Cursor
+# ── Редакторы и ОС ──
 .cursor/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
 
-build/
-dist/
-installer/
-*.pyc
-__pycache__/
+# ── Прочее ──
+*.log

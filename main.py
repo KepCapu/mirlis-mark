@@ -265,7 +265,7 @@ HELP_IMG_WORKSHOP = resource_path("assets/help_sheet_workshop.png")
 HELP_IMG_TABS = resource_path("assets/help_sheet_tabs.png")
 HAPPY_HERO_PATH = resource_path("assets/happy_hero.png")
 
-APP_TITLE = "Mirlis Mark — Система маркировки"
+APP_TITLE = "Mark — Система маркировки"
 APP_MARK = "Mark"
 APP_VERSION = "1.0"
 APP_SUBTITLE = "Система маркировки"
