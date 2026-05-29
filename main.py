@@ -5463,7 +5463,9 @@ class MirlisMarkApp(QWidget):
             return  # уже идёт чтение — игнорируем повторный клик
 
         self.scale_btn.setEnabled(False)
-        self.scale_btn.setText("Поиск весов...")
+        # Текст кнопки НЕ меняем — длинные надписи распирают её и ломают вёрстку.
+        # Статус поиска показываем в заголовке окна (на компоновку не влияет).
+        self.setWindowTitle("Поиск весов…")
 
         # Подтянуть сохранённый порт (если уже находили ранее) — это ускорит запуск
         preferred = ""
@@ -5510,9 +5512,9 @@ class MirlisMarkApp(QWidget):
         QMessageBox.warning(self, "Весы — ошибка", msg)
 
     def _on_scale_progress(self, msg: str):
-        """Показывает текущий проверяемый порт прямо на кнопке."""
+        """Показывает текущий проверяемый порт в заголовке окна (текст кнопки не меняем)."""
         try:
-            self.scale_btn.setText(msg)
+            self.setWindowTitle(msg)
         except Exception:
             pass
 
@@ -5528,16 +5530,10 @@ class MirlisMarkApp(QWidget):
             sys.stderr.write(f"[Scale] Не удалось сохранить порт: {e}\n")
 
     def _on_scale_done(self):
-        """Восстанавливает кнопку после завершения чтения."""
+        """Возвращает кнопку в активное состояние (текст и иконка не менялись)."""
         self.scale_btn.setEnabled(True)
-        self.scale_btn.setText("Взвесить")
-        # Восстановить иконку (Qt сбрасывает её при setText в некоторых стилях — на всякий случай)
         try:
-            _pix = QPixmap(resource_path("assets/scales.png"))
-            if not _pix.isNull():
-                _pix = _pix.scaledToHeight(self._s(28), Qt.SmoothTransformation)
-                self.scale_btn.setIcon(QIcon(_pix))
-                self.scale_btn.setIconSize(QSize(self._s(28), self._s(28)))
+            self.setWindowTitle(APP_TITLE)
         except Exception:
             pass
 
