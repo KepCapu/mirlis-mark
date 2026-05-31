@@ -1,4 +1,4 @@
-VSVersionInfo(
+﻿VSVersionInfo(
   ffi=FixedFileInfo(
     filevers=(1, 0, 0, 0),
     prodvers=(1, 0, 0, 0),
@@ -16,13 +16,13 @@ VSVersionInfo(
           '040904B0',
           [
             StringStruct('CompanyName', 'LDN Tech'),
-            StringStruct('FileDescription', 'Mark — Система маркировки'),
+            StringStruct('FileDescription', 'Mark - Sistema markirovki'),
             StringStruct('FileVersion', '1.0.0.0'),
             StringStruct('InternalName', 'Mark'),
             StringStruct('OriginalFilename', 'Mark.exe'),
             StringStruct('ProductName', 'Mark'),
             StringStruct('ProductVersion', '1.0.0.0'),
-            StringStruct('LegalCopyright', '© 2026 Михаил Ладин (LDN Tech)'),
+            StringStruct('LegalCopyright', (chr(169) + ' 2026 LDN Tech')),
           ]
         )
       ]

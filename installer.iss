@@ -9,7 +9,6 @@ DefaultDirName={commonpf}\Mark
 ArchitecturesInstallIn64BitMode=x64compatible
 DefaultGroupName=Mark
 DisableProgramGroupPage=yes
-LicenseFile=license.txt
 OutputDir=installer
 OutputBaseFilename=MarkSetup
 Compression=lzma
