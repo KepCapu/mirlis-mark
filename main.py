@@ -4760,9 +4760,20 @@ class MirlisMarkApp(QWidget):
 
         list_widget = QListWidget()
         list_widget.setStyleSheet(
-            "QListWidget { border: 1px solid #d1d5db; border-radius: 10px; background: #ffffff; }"
-            "QListWidget::item { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; }"
+            "QListWidget { border: 1px solid #d1d5db; border-radius: 10px; background: #ffffff; outline: none; }"
+            "QListWidget::item { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; color: #111827; }"
+            "QListWidget::item:selected { background: #dcfce7; color: #111827; }"
+            "QListWidget::item:hover { background: #f0fdf4; }"
         )
+
+        # Клик по всей строке переключает галочку (а не только по квадратику слева).
+        def _toggle_item_check(it):
+            if it is None:
+                return
+            new_state = Qt.Unchecked if it.checkState() == Qt.Checked else Qt.Checked
+            it.setCheckState(new_state)
+        list_widget.itemClicked.connect(_toggle_item_check)
+
         for s in sources:
             text = s["path"]
             if not os.path.isfile(s["path"]):
