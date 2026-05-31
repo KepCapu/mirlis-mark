@@ -4679,15 +4679,27 @@ class MirlisMarkApp(QWidget):
 
         list_widget = QListWidget()
         list_widget.setStyleSheet(
-            "QListWidget { border: 1px solid #d1d5db; border-radius: 10px; background: #ffffff; }"
-            "QListWidget::item { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; }"
+            "QListWidget { border: 1px solid #d1d5db; border-radius: 10px; background: #ffffff; outline: none; }"
+            "QListWidget::item { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; color: #111827; }"
             "QListWidget::item:selected { background: #fee2e2; color: #991b1b; }"
+            "QListWidget::item:hover { background: #fef2f2; }"
         )
+
+        # Клик по всей строке переключает галочку (а не только по квадратику слева).
+        def _toggle_del_item_check(it):
+            if it is None:
+                return
+            new_state = Qt.Unchecked if it.checkState() == Qt.Checked else Qt.Checked
+            it.setCheckState(new_state)
+        list_widget.itemClicked.connect(_toggle_del_item_check)
+
         for s in sources:
             text = s["path"]
             if not os.path.isfile(s["path"]):
                 text = text + "   (файл не найден на диске)"
             item = QListWidgetItem(text)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
             item.setData(Qt.UserRole, s["path"])
             list_widget.addItem(item)
         lay.addWidget(list_widget, 1)
@@ -4705,26 +4717,32 @@ class MirlisMarkApp(QWidget):
         lay.addLayout(btn_row)
 
         def _do_delete():
-            cur = list_widget.currentItem()
-            if cur is None:
-                QMessageBox.information(dlg, "Не выбран файл", "Выберите файл в списке.")
+            checked_paths = [
+                list_widget.item(i).data(Qt.UserRole)
+                for i in range(list_widget.count())
+                if list_widget.item(i).checkState() == Qt.Checked
+            ]
+            if not checked_paths:
+                QMessageBox.information(dlg, "Не выбран файл", "Отметьте галочкой файлы для удаления.")
                 return
-            target_path = cur.data(Qt.UserRole)
+            names = "\n".join(checked_paths)
             reply = QMessageBox.question(
                 dlg,
                 "Подтверждение",
-                f"Убрать файл из списка приложения?\n\n{target_path}\n\nСам файл на диске НЕ удаляется.",
+                f"Убрать выбранные файлы из списка приложения?\n\n{names}\n\nСами файлы на диске НЕ удаляются.",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
                 return
+            checked_norm = {os.path.normcase(os.path.normpath(p)) for p in checked_paths}
             new_sources = [s for s in self._load_excel_sources()
-                           if os.path.normcase(os.path.normpath(s["path"])) !=
-                              os.path.normcase(os.path.normpath(target_path))]
+                           if os.path.normcase(os.path.normpath(s["path"])) not in checked_norm]
             self._save_excel_sources(new_sources)
-            row = list_widget.row(cur)
-            list_widget.takeItem(row)
+            for i in range(list_widget.count() - 1, -1, -1):
+                it = list_widget.item(i)
+                if os.path.normcase(os.path.normpath(it.data(Qt.UserRole))) in checked_norm:
+                    list_widget.takeItem(i)
             if list_widget.count() == 0:
                 dlg.accept()
 
@@ -6532,6 +6550,7 @@ def main():
     fmt.setRenderableType(QSurfaceFormat.OpenGL)
     QSurfaceFormat.setDefaultFormat(fmt)
 
+    QApplication.setAttribute(Qt.AA_DisableWindowContextHelpButton, True)
     app = QApplication(sys.argv)
     main_window = None
     selected_mode = None
