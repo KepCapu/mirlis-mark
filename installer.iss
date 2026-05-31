@@ -32,9 +32,11 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 [Files]
 Source: "dist\Mark\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "data_sources\products.xlsx"; DestDir: "{app}\data_sources"; Flags: ignoreversion
+Source: "docs\Руководство_пользователя.pdf"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Mark"; Filename: "{app}\Mark.exe"
+Name: "{group}\Инструкция"; Filename: "{app}\Руководство_пользователя.pdf"
 Name: "{autodesktop}\Mark"; Filename: "{app}\Mark.exe"; Tasks: desktopicon
 
 [Run]

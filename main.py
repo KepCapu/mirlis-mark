@@ -2221,6 +2221,18 @@ class MirlisMarkApp(QWidget):
             "#StatsBtn:hover { background: #fde68a; }"
         )
         self.stats_btn.clicked.connect(self._open_statistics)
+
+        # ===== Кнопка «Инструкция» (справа от «Статистика») =====
+        self.manual_btn = ActionBtn("Инструкция", kind="default")
+        self.manual_btn.setObjectName("ManualBtn")
+        self.manual_btn.setStyleSheet(
+            "#ManualBtn { background: #ffffff; border: 1px solid #d1d5db; "
+            "color: #374151; font-weight: 700; font-size: 16px; padding: 18px 22px; }"
+            "#ManualBtn:hover { background: #f3f4f6; }"
+        )
+        self.manual_btn.setToolTip("Открыть руководство пользователя (PDF)")
+        self.manual_btn.clicked.connect(self._open_manual)
+
         # ===== Правая ячейка брови (стретч 3) — симметрична левой =====
         right_cell = QWidget()
         right_cell.setStyleSheet("background: transparent;")
@@ -2229,6 +2241,7 @@ class MirlisMarkApp(QWidget):
         right_cell_lay.setSpacing(14)
         right_cell_lay.addStretch(1)
         right_cell_lay.addWidget(self.stats_btn, 0, Qt.AlignVCenter)
+        right_cell_lay.addWidget(self.manual_btn, 0, Qt.AlignVCenter)
         top_layout.addWidget(right_cell, 3)
 
         # ПК: самую малость расширяем центральную ячейку верхней панели, чтобы
@@ -4399,6 +4412,38 @@ class MirlisMarkApp(QWidget):
         os.makedirs(folder, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
+    # --- Единственная настройка: имя файла руководства ---
+    MANUAL_PDF_NAME = "Руководство_пользователя.pdf"
+
+    def _manual_pdf_path(self):
+        """Путь к PDF-инструкции: из exe — рядом с Mark.exe; из исходников — в папке docs."""
+        name = self.MANUAL_PDF_NAME
+        candidates = []
+        if getattr(sys, "frozen", False):
+            candidates.append(os.path.join(os.path.dirname(sys.executable), name))
+        else:
+            candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs", name))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), name))
+        candidates.append(resource_path(name))
+        candidates.append(resource_path(os.path.join("docs", name)))
+        for p in candidates:
+            if p and os.path.isfile(p):
+                return p
+        return None
+
+    def _open_manual(self):
+        """Открыть руководство пользователя (PDF) программой по умолчанию."""
+        path = self._manual_pdf_path()
+        if not path:
+            QMessageBox.information(
+                self,
+                "Инструкция",
+                "Файл инструкции не найден рядом с программой.\n"
+                "Переустановите приложение или обратитесь к администратору.",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
     # =================== Excel sources management (Этап B) ===================
     # Хранится в settings.json как массив:
     #   "excel_sources": [
@@ -4929,6 +4974,7 @@ class MirlisMarkApp(QWidget):
         for b in (
             getattr(self, "tools_frame", None),
             getattr(self, "stats_btn", None),
+            getattr(self, "manual_btn", None),
         ):
             if b is not None:
                 b.setVisible(not enabled)
