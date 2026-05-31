@@ -1,6 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Сборка приложения «Mark». Собрать:  pyinstaller Mark.spec
-# (или эквивалентной командой PyInstaller с --name Mark, см. README.md)
+
 
 a = Analysis(
     ['main.py'],
@@ -33,8 +32,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets\\mark_app.ico'],
     version='version_info.txt',
+    icon=['assets\\mark_app.ico'],
 )
 coll = COLLECT(
     exe,
