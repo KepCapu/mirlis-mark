@@ -12,6 +12,8 @@
 
 Продукт выпускается под брендом **LDN Tech**. © 2026 LDN Tech.
 
+📖 **Руководство пользователя:** [`docs/Руководство_пользователя.pdf`](docs/Руководство_пользователя.pdf) (PDF со скриншотами) · [`docs/Руководство_пользователя.md`](docs/Руководство_пользователя.md) (версия для GitHub).
+
 ---
 
 ## Требования
@@ -101,6 +103,7 @@ py -m PyInstaller --noconfirm --clean --name Mark --icon=assets\mark_app.ico --v
 | `stats_sources_dialog.py`        | Диалог управления источниками данных |
 | `assets/`                        | Иконки и изображения (`mark_app.ico`, `scales.png`, `movement.png`) |
 | `data_sources/`                  | Excel-данные (`products.xlsx`) |
+| `docs/`                          | Руководство пользователя (PDF и MD со скриншотами в `docs/images/`) |
 | `installer.iss`                  | Скрипт установщика (Inno Setup) |
 | `version_info.txt`               | Метаданные .exe (название, версия, копирайт) |
 | `Mark.spec`                      | Конфигурация сборки PyInstaller |
